@@ -24,6 +24,7 @@ colours.
 
 ## Run
 
+[Open in molab](https://molab.marimo.io/github/github.com/kentstephen/s2-wsf-aef-overture-pair/blob/main/s2-wsf-aef-overture-pair.py).
 molab runs in the same region as the data and is the faster place to open it.
 Locally, the dependencies are declared inline (PEP 723):
 
