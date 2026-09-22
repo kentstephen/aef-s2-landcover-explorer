@@ -1,6 +1,27 @@
+# Claude
 .claude/memory/
+
+# Secrets
 .env
+.env.*
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
 .venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# marimo
 __marimo__/
+layouts/
+
+# Tooling / OS
+.DS_Store
+.vscode/
+.idea/
