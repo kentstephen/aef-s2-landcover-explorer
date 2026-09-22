@@ -238,6 +238,31 @@ def _(mo):
     pixels cross as one dataset and the cell is the GROUP BY. Nothing is
     tessellated in the kernel; the browser receives cell ids and colours.
 
+    **How a hexagon gets its WSF numbers.** Each 10 m pixel carries one value,
+    the half-year it first read as built-up. The fold counts the pixels under
+    each hexagon by that value, so a hexagon is a small histogram of first
+    detection dates. From it: the share built-up by the end of the window,
+    the share whose first date falls inside the window (**WSF grew**), and
+    the year holding most of those new pixels (**WSF build year**). A
+    hexagon counts as having grown when at least 1% of its pixels are new
+    inside the window; below that it is treated as quiet.
+
+    **How a hexagon gets its AlphaEarth numbers.** AlphaEarth describes each
+    10 m pixel, for each year, as a 64-number vector: a fingerprint of what
+    the ground looked like that year. The fold averages those vectors over
+    the pixels under each hexagon, giving one fingerprint per hexagon per
+    year. Two fingerprints are compared by the angle between them: 1 minus
+    cosine similarity, 0 when they point the same way, larger the more they
+    differ. **AEF changed** is that distance between the first and last year
+    of the window. For **AEF change year** the notebook walks the window one
+    year at a time and looks for the first step whose distance clears a
+    quiet level. The quiet level is set by the view itself: among the
+    hexagons WSF says did not grow, 95% of their largest yearly steps fall
+    below it, so a step above it is bigger than almost anything the
+    unchanged ground does. The change year is the first year that happens.
+    If a view has fewer than 30 quiet hexagons the level is not set and the
+    fill stays unscored.
+
     ## Attribution
 
     WSF Tracker (c) DLR and MindEarth, via Source Cooperative (mindearth/wsf,
