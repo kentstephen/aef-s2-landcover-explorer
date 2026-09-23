@@ -189,7 +189,8 @@ def _(mo):
     ## Controls
 
     - **S2** (left header): a slider over the mosaic years, also driven by the
-      arrow keys or `[` and `]` after a click on either map. The `scale` slider
+      arrow keys or `[` and `]` after a click on either map. `b` blinks between
+      the first and last mosaic year. The `scale` slider
       is a gain on the picture. Where a yearly mosaic has a gap (for example
       2022 over Nusantara, clouded all year), the same year's temporal median
       composite fills it and the status line reports the share of pixels that
@@ -1701,7 +1702,7 @@ def _(anywidget, asyncio, traitlets):
           const yrTks = document.createElement("span"); yrTks.className = "tks";
           for (const y of s2Years) { const t = document.createElement("span"); const i = document.createElement("i"); i.style.fontStyle = "normal"; i.textContent = String(y); t.appendChild(i); yrTks.appendChild(t); }
           const yri = document.createElement("input"); yri.type = "range"; yri.min = 0; yri.max = Math.max(0, s2Years.length - 1); yri.step = 1;
-          yri.title = "which Sentinel-2 yearly mosaic is drawn; the tiles follow the drag (arrow keys, or [ and ])";
+          yri.title = "which Sentinel-2 yearly mosaic is drawn; the tiles follow the drag (arrow keys, or [ and ]; b blinks first and last year)";
           const yrTxt = document.createElement("span");
           yrTxt.style.cssText = "font-variant-numeric:tabular-nums;min-width:2.6em";
           yr.append(yrTrk, yrSpn, yrTks, yri);
@@ -1882,7 +1883,7 @@ def _(anywidget, asyncio, traitlets):
           window.addEventListener("resize", () => { paneHeight(); });
           const hint = document.createElement("div");
           hint.style.cssText = mono + ";opacity:.55";
-          hint.textContent = "keys: [ ] S2 year · ; ' S2 scale · 1-5 fill · - = window from · _ + window to · L labels · F full screen · click a hexagon for its row";
+          hint.textContent = "keys: [ ] S2 year · B first/last year · ; ' S2 scale · 1-5 fill · - = window from · _ + window to · L labels · F full screen · click a hexagon for its row";
           hint.style.color = "#666";
           strip.appendChild(hint);
           hint.hidden = !!cfg.minimal;
@@ -1900,6 +1901,8 @@ def _(anywidget, asyncio, traitlets):
             if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
             const k = e.key;
             if (k === "[" || k === "]" || k === "ArrowLeft" || k === "ArrowRight") { s2y = step(cfg.s2_years || [], s2y, (k === "]" || k === "ArrowRight") ? 1 : -1); styleS2(); yrRelease(); }
+            // b blinks the picture between the first and last mosaic years, as in the CTrees pair
+            else if (k === "b" || k === "B") { const ys = cfg.s2_years || []; const a = ys[0], z = ys[ys.length - 1]; if (a != null && z != null) { s2y = (s2y === z) ? a : z; styleS2(); yrRelease(); } }
             else if (k === ";" || k === "'") { s2scale = Math.round(10 * Math.max(SC_MIN, Math.min(SC_MAX, s2scale + (k === "'" ? 0.1 : -0.1)))) / 10; styleSc(); scRelease(); }
             else if (k >= "1" && k <= "9") { const f = fills[Number(k) - 1]; if (f) { fill = f.value; styleFill(); send("fill"); } }
             else if (k === "-" || k === "=") { const v = step(aefYears, y0, k === "=" ? 1 : -1); if (v < y1) { y0 = v; styleAef(); aefRelease(); } }
