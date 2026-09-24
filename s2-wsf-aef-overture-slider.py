@@ -137,34 +137,36 @@ def _(mo):
     mo.md("""
     # Overture buildings, with the other datasets as layers
 
-    One map. From zoom 14 the Overture building footprints are drawn, each
-    coloured by one thing you pick under **BUILDINGS** (keys `1` to `5`):
+    One map. **WSF** and **buildings** are on when it opens. From zoom 14 the
+    Overture building footprints are drawn with a gold edge, each coloured by
+    one thing you pick under **BUILDINGS** (key `Q` steps through them):
 
-    - **WSF year**: the earliest half-year WSF read the ground under the
-      footprint as built-up. Grey is already built when the record opens
-      (July 2016); near white is a footprint WSF has never read as built-up.
+    - **WSF year**: the year WSF first read the ground under the footprint as
+      built-up. Grey is already built when the record opens in 2016; near
+      white is a footprint WSF has never read as built-up.
     - **AEF year**: the first year the footprint's own AlphaEarth fingerprint
       jumped past a quiet level set by the footprints that were standing the
       whole time. Read on demand for the view (all nine years), so the first
       time takes a moment. Same palette as WSF year: flip between the two and
       a footprint that changes colour is one the witnesses date differently.
-    - **WSF share**: how much of the footprint's ground WSF reads as built-up.
     - **source**: the dataset Overture took the footprint from.
-    - **mapped**: the year that dataset last touched it. A building cannot be
-      newer than its map.
 
-    **LAYERS** switches the other datasets on and off (keys `B` `W` `E` `I`):
-    the **WSF** raster, one colour per year of first detection, which shows
-    built ground with no footprint around the buildings; **AEF**, the
-    AlphaEarth embeddings (and WSF) folded to H3 hexagons over the year window, from
-    zoom 9, with their own fills and the window slider; the
-    **S2** mosaic, off by default, since at 10 m it cannot confirm a
-    footprint. **FIND** flies to a place.
+    **LAYERS**, listed top to bottom as drawn (keys `B` `W` `A` `S`):
+    **buildings**; the **WSF** raster at 10 m, one colour per year of first
+    detection, which shows built ground with no footprint around the
+    buildings; **AEF**, the AlphaEarth embeddings folded to H3 hexagons from
+    zoom 9, finer as you zoom (res 12 from zoom 14.6), with two fills, how
+    much the fingerprint changed over the year window and the year it changed
+    most, and the window slider; **S2**, the Sentinel-2 mosaic on the left of
+    a divider you drag across the map, the data on its right, the footprints
+    on both sides, with its year (`[` `]`, `F` for first or last) and a gamma
+    slider. **FIND** flies to a place. `X` fills the browser window, `Esc`
+    brings it back.
 
     **Click** a footprint for its source, the date the source last touched
-    it, the WSF pixels and earliest date under it, AlphaEarth's year once
-    read, and the place from the same Overture release. Click between
-    footprints for what WSF says about that ground.
+    it, the WSF pixels and first year under it, AlphaEarth's year once read,
+    and the place from the same Overture release. Click between footprints
+    for what WSF says about that ground. Click a hexagon for its own account.
 
     Overture is read from a pinned release on Overture's own bucket
     (override with `OVERTURE_RELEASE`; the status line names the release in
