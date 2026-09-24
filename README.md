@@ -4,6 +4,11 @@
 
 Settlement growth read two ways on one H3 grid, in a single marimo notebook.
 
+Two notebooks: the **pair** (`s2-wsf-aef-overture-pair.py`, two maps, one
+camera) and the **slider** (`s2-wsf-aef-overture-slider.py`, one map, the
+Overture building footprints over everything, the Sentinel-2 mosaic behind a
+divider you drag). The slider is described in its own section below.
+
 Two maps share one camera. On the left, Earth Genome's [Sentinel-2 yearly
 mosaic](https://source.coop/earthgenome/sentinel2-yearly-mosaics) (true colour,
 2022 to 2025), rendered by the kernel from the COGs. On
@@ -26,14 +31,35 @@ downloaded ahead of time. Every raster is folded onto H3 cells by the H3 UDF
 inside DataFusion (xarray-sql), and the browser receives only cell ids and
 colours.
 
+## The slider notebook
+
+[![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/s2-wsf-aef-overture-pair/blob/main/s2-wsf-aef-overture-slider.py)
+
+`s2-wsf-aef-overture-slider.py` turns the pair inside out: one map, and the
+[Overture Maps buildings](https://docs.overturemaps.org/guides/buildings/)
+are the subject. From zoom 14 every footprint is drawn from Overture's pinned
+release and coloured by one thing at a time: the year WSF first read the
+ground under it as built-up, the first year its own AlphaEarth fingerprint
+jumped, or the dataset that drew it. Under the footprints, layers you switch
+on and off: the WSF raster at 10 m, the H3 hexagons of the pair (AlphaEarth
+change over the year window, finer as you zoom, res 12 from zoom 14.6), and
+the Sentinel-2 mosaic on the left of a divider you drag across the map, the
+data on its right, the footprints on both sides. A click on a footprint gives
+its source, its WSF pixels and their first year, and AlphaEarth's year; a
+click on bare ground says what WSF saw there that Overture has no building
+for. Keys: `B` `W` `A` `S` switch the layers, `Q` steps the building fill,
+`F` flips the mosaic between its first and last year, `X` fills the window.
+
 ## Run
 
-[Open in molab](https://molab.marimo.io/github/github.com/kentstephen/s2-wsf-aef-overture-pair/blob/main/s2-wsf-aef-overture-pair.py).
-molab runs in the same region as the data and is the faster place to open it.
+[Open the pair in molab](https://molab.marimo.io/github/github.com/kentstephen/s2-wsf-aef-overture-pair/blob/main/s2-wsf-aef-overture-pair.py)
+or [the slider in molab](https://molab.marimo.io/github/github.com/kentstephen/s2-wsf-aef-overture-pair/blob/main/s2-wsf-aef-overture-slider.py).
+molab runs in the same region as the data and is the faster place to open them.
 Locally, the dependencies are declared inline (PEP 723):
 
 ```
 uv run marimo edit s2-wsf-aef-overture-pair.py --sandbox
+uv run marimo edit s2-wsf-aef-overture-slider.py --sandbox
 ```
 
 Controls, the fills and the click panel are described in the notebook's first
@@ -50,6 +76,7 @@ Everything is read live from [Source Cooperative](https://source.coop).
 | World Settlement Footprint (WSF) Tracker, 10 m, 2016 to 2026 | DLR and MindEarth | [mindearth/wsf](https://source.coop/mindearth/wsf) ([DOI 10.5281/zenodo.20424537](https://doi.org/10.5281/zenodo.20424537)) | CC BY 3.0 IGO |
 | AlphaEarth Foundations Satellite Embedding, annual, 2017 to 2025 | Google and Google DeepMind ([dataset page](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)) | [tge-labs/aef](https://source.coop/tge-labs/aef) (index) and [tge-labs/aef-mosaic](https://source.coop/tge-labs/aef-mosaic) (COG overviews) | CC BY 4.0 |
 | Overture Maps divisions (PMTiles, regions and counties) | Overture Maps Foundation | [cboettig/overturemaps](https://source.coop/cboettig/overturemaps) | ODbL |
+| Overture Maps buildings and divisions (the slider: GeoParquet and PMTiles from a pinned release) | Overture Maps Foundation | [Overture's own release bucket](https://docs.overturemaps.org/getting-data/) | ODbL |
 | Overture Maps divisions (GeoParquet, point-in-polygon on click) | Overture Maps Foundation | [fused/overture](https://source.coop/fused/overture) | ODbL |
 
 Also used: place search by [Photon](https://photon.komoot.io/) (komoot) over
