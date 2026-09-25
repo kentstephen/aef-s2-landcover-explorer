@@ -2038,10 +2038,12 @@ def _(anywidget, asyncio, time, traitlets):
             if (by === "mouse") suppressClick = true;
             mapEl.classList.add("holding");
             mapEl.classList.toggle("key", by === "key");
-            // the wheel is the year while holding; a space hold leaves the map
-            // free to drag ("i'd like to be able to move the map when space is
-            // pressed"), a mouse hold cannot (the press is the hold)
-            map.scrollZoom.disable();
+            // the wheel is the year while holding (the capture listener on root
+            // keeps it from the map, so scrollZoom stays on: disabling it
+            // mid-zoom left maplibre's zoom marked active, and scroll froze
+            // after the hold); a space hold leaves the map free to drag ("i'd
+            // like to be able to move the map when space is pressed"), a mouse
+            // hold cannot (the press is the hold)
             if (by === "mouse") map.dragPan.disable();
             tip.style.display = "none";
             renderYear(); update();
@@ -2051,7 +2053,7 @@ def _(anywidget, asyncio, time, traitlets):
             if (!st.holding || (by && by !== holdBy)) return;
             st.holding = false; holdBy = null;
             mapEl.classList.remove("holding");
-            if (map) { map.dragPan.enable(); map.scrollZoom.enable(); }
+            if (map) map.dragPan.enable();
             wheelAcc = 0;
             renderYear(); update();
             if (lastPt && map) showHexTip(lastPt);
