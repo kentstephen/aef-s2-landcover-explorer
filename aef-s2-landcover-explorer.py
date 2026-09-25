@@ -1256,7 +1256,7 @@ def _(anywidget, asyncio, traitlets):
         @keyframes at-run{0%{left:-28%}100%{left:100%}}
         .at-msg{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;z-index:5;font-size:13px;color:var(--muted);padding:6px 11px;display:none;max-width:min(520px,calc(100% - 24px))}
         .at-msg.err{color:#8a4b00}
-        .at-yc{position:absolute;right:12px;top:60px;z-index:6;width:320px;max-width:calc(100% - 24px);max-height:calc(100% - 76px);overflow:auto;padding:14px 16px 12px}
+        .at-yc{position:absolute;right:12px;top:60px;z-index:6;width:320px;max-width:calc(100% - 24px);padding:14px 16px 12px;transform-origin:top right}
         .at-yc .yr{display:flex;align-items:flex-end;gap:12px}
         .at-yc .yr b{font-size:56px;line-height:.86;font-weight:600;letter-spacing:-.035em;font-stretch:88%}
         .at-yc .yr span{font-size:12.5px;color:var(--muted);line-height:1.35;padding-bottom:2px}
@@ -1264,7 +1264,8 @@ def _(anywidget, asyncio, traitlets):
         .at-yc h4{margin:14px 0 2px;font-size:13.5px;font-weight:600}
         .at-yc .sub{color:var(--muted);font-size:12.5px;margin:0 0 6px}
         .at-yc .hex{border-top:1px solid var(--line);margin-top:12px;padding-top:12px;position:relative}
-        .at-yc .hex .place{color:var(--muted);font-size:12.5px;margin-bottom:2px;padding-right:28px}
+        .at-yc .hex .place{color:var(--text);font-size:13px;font-weight:600;margin-bottom:2px;padding-right:28px}
+        .at-yc .hex .place span{font-weight:400;color:var(--muted)}
         .at-yc .hex h3{margin:0 0 6px;font-size:16px;font-weight:600;letter-spacing:-.005em;padding-right:28px}
         .at-yc .hex p{margin:0 0 8px}
         .at-yc .x{position:absolute;right:-6px;top:6px;border:0;background:none;color:var(--muted);cursor:pointer;width:28px;height:28px;border-radius:8px;font-size:17px;line-height:1}
@@ -1293,7 +1294,7 @@ def _(anywidget, asyncio, traitlets):
         .at-about p{margin:0 0 10px;max-width:66ch}
         .at-about small{color:var(--muted)}
         .at .maplibregl-ctrl-group{border:1px solid var(--line);box-shadow:0 6px 22px rgba(20,30,40,.14);border-radius:10px}
-        @media (max-width:760px){.at-top{max-width:calc(100% - 24px)}.at-search{width:calc(100vw - 48px)}.at-yc{top:auto;bottom:12px;max-height:45%}.at-tools{top:108px}}
+        @media (max-width:760px){.at-top{max-width:calc(100% - 24px)}.at-search{width:calc(100vw - 48px)}.at-yc{top:auto;bottom:12px;max-height:45%;overflow:auto}.at-tools{top:108px}}
         @media (prefers-reduced-motion:reduce){.at-bar i{animation:none;left:0;width:100%}}
         """
 
@@ -1606,7 +1607,7 @@ def _(anywidget, asyncio, traitlets):
           function hexSection(c) {
             if (!c || !c.kind) return "";
             let h = `<div class="hex"><button class="x" title="close (Esc)" aria-label="close">×</button>`;
-            if (c.place && c.place.length) h += `<div class="place">${c.place.map((q) => typeof q === "string" ? esc(q) : esc(q.name) + (q.tag ? ` <span style="opacity:.7">(${esc(q.tag)})</span>` : "")).join(", ")}</div>`;
+            if (c.place && c.place.length) h += `<div class="place">${c.place.map((q) => typeof q === "string" ? esc(q) : esc(q.name) + (q.tag ? ` <span>(${esc(q.tag)})</span>` : "")).join(", ")}</div>`;
             if (c.kind === "note") return h + `<h3>${esc(c.title || "")}</h3></div>`;
             h += `<h3>This hexagon</h3>`;
             if (c.level == null) h += `<p>No AlphaEarth data here.</p>`;
@@ -1636,6 +1637,17 @@ def _(anywidget, asyncio, traitlets):
             yc.innerHTML = h;
             const x = yc.querySelector(".x");
             if (x) x.onclick = () => closeCard();
+            fitCard();
+          }
+          // the card never scrolls (Stephen, 2026-09-25: "that right panel
+          // needs to fit to view no scrolling"): when its content is taller
+          // than the pane below it, it is scaled down from its top right
+          // corner to fit. On a narrow screen it keeps its own scroll.
+          function fitCard() {
+            yc.style.transform = "";
+            if (window.matchMedia("(max-width:760px)").matches) return;
+            const avail = pane.clientHeight - yc.offsetTop - 12, need = yc.offsetHeight;
+            if (avail > 0 && need > avail) yc.style.transform = `scale(${avail / need})`;
           }
           yc.addEventListener("pointermove", (e) => {
             const t = e.target && e.target.getAttribute && e.target.getAttribute("data-tip");
@@ -1830,7 +1842,7 @@ def _(anywidget, asyncio, traitlets):
           const FIT_CLS = "at-fit-on";
           if (!document.getElementById("at-fit-style")) {
             const s = document.createElement("style"); s.id = "at-fit-style";
-            s.textContent = ["notebook-actions-dropdown", "cell-actions-button", "drag-button", "expand-output-button", "fullscreen-output-button"].map((t) => "html." + FIT_CLS + " [data-testid='" + t + "']").join(",") + ",html." + FIT_CLS + " div[class*='top-[25vh]']{display:none!important}html." + FIT_CLS + "{overflow:hidden}";
+            s.textContent = ["notebook-actions-dropdown", "cell-actions-button", "drag-button", "expand-output-button", "fullscreen-output-button", "chrome-sidebar", "chrome-footer", "chrome-controls-top-right", "chrome-controls-bottom-right"].map((t) => "html." + FIT_CLS + " [data-testid='" + t + "']").join(",") + ",html." + FIT_CLS + " div[class*='top-[25vh]']{display:none!important}html." + FIT_CLS + "{overflow:hidden}";
             document.head.appendChild(s);
           }
           function sizes() {
@@ -1916,7 +1928,7 @@ def _(anywidget, asyncio, traitlets):
               model.save_changes();
             });
             map.on("error", (ev) => { if (ev && ev.error && ev.error.message && !/tile|404/i.test(ev.error.message)) say("map: " + ev.error.message); });
-            new ResizeObserver(() => { try { map.resize(); } catch (e) {} }).observe(mapEl);
+            new ResizeObserver(() => { try { map.resize(); } catch (e) {} fitCard(); }).observe(mapEl);
             window.__cmMaps = () => [map];
             window.__cmState = () => ({st: Object.assign({}, st), hex: N, res, hmeta, tiles: tstat, card: cardData});
             // for tests: the centre of the first hexagon whose biggest step is year y and that moved a fair amount

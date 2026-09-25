@@ -1,0 +1,7 @@
+Running in a sandbox: /opt/homebrew/bin/uv run --isolated --no-project --compile-bytecode --with-requirements /var/folders/7c/sjv2kprs3qs3x738ldnw1b040000gn/T/tmp5b4lbjlv.txt --python >=3.13 marimo edit aef-s2-landcover-explorer.py --headless --no-token --port 2811
+
+        Edit aef-s2-landcover-explorer.py in your browser 📝
+
+        ➜  URL: http://localhost:2811
+
+[W 260925 12:46:12 health:451] Neither nvidia-smi nor rocm-smi succeeded, cannot get GPU stats
