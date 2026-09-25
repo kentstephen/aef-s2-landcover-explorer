@@ -169,7 +169,7 @@ def _(os, tempfile):
     # the window holds (Stephen, 2026-09-04).
     S2_YEARS = (2022, 2023, 2024, 2025)
     AEF_YEARS_ALL = tuple(range(2017, 2026))
-    AEF_FROM0, AEF_TO0 = 2022, 2025
+    AEF_FROM0, AEF_TO0 = 2017, 2025
     S2_YEAR0 = 2022
     # the S2 mosaic's opening `scale`: a gain on the TCI bytes (1 = as served)
     S2_SCALE0 = 1.0
@@ -346,7 +346,7 @@ def _(os, tempfile):
     # listed top to bottom as drawn (Stephen, 2026-09-24: "buildings, WSF, AEF,
     # and then optionally the base maps"): footprints over the raster over the
     # hexagons, S2 the optional base under them all
-    LAYERS0 = {"bld": True, "wsf": False, "hex": False, "s2": True}
+    LAYERS0 = {"bld": True, "wsf": True, "hex": False, "s2": False}
     LAYER_DEFS = (("bld", "buildings", "Overture footprints, one fill at a time (from zoom 13)"),
                   ("wsf", "WSF", "the WSF Tracker raster: one colour per year of first detection"),
                   ("hex", "AEF", "the AlphaEarth embeddings (and WSF) folded to H3 hexagons over the year window (from zoom 9, finer as you zoom, res 12 from 14.6)"),
@@ -1712,24 +1712,28 @@ def _(
 @app.cell
 def _(anywidget, asyncio, traitlets):
     class Atlas(anywidget.AnyWidget):
-        """The map: Sentinel-2 imagery under everything, the Overture
-        footprints lit by the year they were first seen built, a timeline that
-        scrubs and plays that year, three lenses (growth, map check, sources),
-        a card for whatever is clicked, a before/after compare.
+        """The map: a plain basemap, the Overture footprints lit by the year
+        they were first seen built, the AlphaEarth hexagons by the year the
+        ground changed, a timeline, the Sentinel-2 imagery as a layer you add,
+        and a card for whatever is clicked. When the clicked thing changed
+        inside the imagery's years, the imagery flips between the year before
+        and the year after on its own.
 
         Kernel -> browser: `polys` (the footprints, Arrow IPC, native GeoArrow
-        polygons, one batch) with `battrs` (4 bytes per footprint: WSF year
-        code, AlphaEarth year code, source index, last-touched year) and
-        `bmeta` (JSON: the source names, the box, counts); `gap` (PNG: WSF
-        built-up ground with no footprint, over `bmeta.box`); `cells` /
-        `colors` (the optional AlphaEarth hexagons); `card` (JSON: what was
-        clicked); `legend` (the hexagons' legend); `status`; `config`.
-        Browser -> kernel: `view`, `pick`, `ctl`. Tiles are custom messages:
-        `s2` (a year's mosaic) and `wsfidx` (the WSF index itself, coloured
-        in the browser for whatever year the timeline is on)."""
+        polygons) with `battrs` (4 bytes per footprint: WSF index 0..20,
+        AlphaEarth year code, source index, last-touched year) and `bmeta`
+        (JSON: source names, box, counts); `gap` (PNG: built-up ground 20 m
+        or more from any footprint, over `bmeta.box`); `cells` with `hattrs`
+        (4 bytes per hexagon: AlphaEarth change year code, how much it
+        changed 1..255, WSF new share, WSF built share) and `hmeta`; `card`
+        (JSON); `status`; `config`. Browser -> kernel: `view`, `pick`, `ctl`.
+        Tiles are custom messages: `s2` (a year's mosaic) and `wsfidx` (the
+        WSF index itself, coloured in the browser for the timeline's year)."""
 
         cells = traitlets.Bytes(b"").tag(sync=True)
         colors = traitlets.Bytes(b"").tag(sync=True)
+        hattrs = traitlets.Bytes(b"").tag(sync=True)
+        hmeta = traitlets.Unicode("{}").tag(sync=True)
         polys = traitlets.Bytes(b"").tag(sync=True)
         battrs = traitlets.Bytes(b"").tag(sync=True)
         bmeta = traitlets.Unicode("{}").tag(sync=True)
@@ -1772,76 +1776,82 @@ def _(anywidget, asyncio, traitlets):
                 self.send({"kind": "tile", "id": c["id"]}, buffers=[png])
 
         _css = r"""
-        .at{--glass:rgba(16,20,25,.74);--glass-hi:rgba(26,31,38,.94);--line:rgba(255,255,255,.13);--text:#eef2f4;--muted:#a3adb6;--amber:#f6b73c;--glow:#ffd678;--cool:#7cc7ff;
-          position:relative;width:100%;background:#0d1013;color:var(--text);font:14px/1.45 "Instrument Sans",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;overflow:hidden;border-radius:10px;-webkit-font-smoothing:antialiased}
+        .at{--glass:rgba(255,255,255,.9);--glass-hi:#fff;--line:rgba(24,32,40,.13);--text:#1b2127;--muted:#5d6873;--amber:#e69f00;--deep:#b85c00;--cool:#0072b2;--sel:rgba(24,32,40,.08);
+          position:relative;width:100%;background:#eef0f1;color:var(--text);font:14px/1.45 "Instrument Sans",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;overflow:hidden;border-radius:10px;-webkit-font-smoothing:antialiased}
         .at.fit{position:fixed;inset:0;z-index:9999;border-radius:0}
         .at *{box-sizing:border-box}
         .at-pane{position:relative;width:100%}
         .at-map{position:absolute;inset:0}
-        .at-map-l{display:none;right:auto;width:50%;border-right:1px solid rgba(255,255,255,.5)}
-        .at-glass{background:var(--glass);backdrop-filter:blur(14px) saturate(1.15);-webkit-backdrop-filter:blur(14px) saturate(1.15);border:1px solid var(--line);border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+        .at-glass{background:var(--glass);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 22px rgba(20,30,40,.14)}
         .at button{font:inherit;color:inherit}
         .at button:focus-visible,.at input:focus-visible{outline:2px solid var(--cool);outline-offset:2px}
-        .at-top{position:absolute;left:12px;top:12px;z-index:6;display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;max-width:calc(100% - 200px)}
-        .at-search{position:relative;display:flex;align-items:center;gap:8px;padding:0 12px;height:40px;width:280px}
-        .at-search svg{flex:0 0 auto;opacity:.7}
+        .at-top{position:absolute;left:12px;top:12px;z-index:6;display:flex;flex-direction:column;gap:8px;align-items:flex-start;max-width:calc(100% - 150px)}
+        .at-search{position:relative;display:flex;align-items:center;gap:8px;padding:0 12px;height:40px;width:270px}
+        .at-search svg{flex:0 0 auto;opacity:.6}
         .at-search input{flex:1;min-width:0;background:none;border:0;color:var(--text);font:inherit;outline:none}
         .at-search input::placeholder{color:var(--muted)}
-        .at-search input::-webkit-search-cancel-button{filter:invert(1);opacity:.5}
         .at-hits{position:absolute;left:-1px;right:-1px;top:46px;display:none;padding:4px;background:var(--glass-hi)}
         .at-hit{padding:7px 10px;border-radius:8px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         .at-hit small{display:block;color:var(--muted);font-size:12px}
-        .at-hit.sel{background:rgba(255,255,255,.1)}
+        .at-hit.sel{background:var(--sel)}
+        .at-panel{display:flex;flex-direction:column;gap:6px;padding:7px 9px}
+        .at-row{display:flex;align-items:center;gap:8px}
+        .at-lab{font-size:12.5px;color:var(--muted);min-width:74px}
         .at-seg{display:flex;padding:3px;height:40px;gap:2px}
-        .at-seg button{border:0;background:none;color:var(--muted);padding:0 13px;border-radius:9px;cursor:pointer;white-space:nowrap}
+        .at-seg button{border:0;background:none;color:var(--muted);padding:0 12px;border-radius:9px;cursor:pointer;white-space:nowrap}
         .at-seg button:hover{color:var(--text)}
-        .at-seg button.on{background:rgba(255,255,255,.13);color:var(--text)}
+        .at-seg button.on{background:var(--text);color:#fff}
         .at-tools{position:absolute;right:12px;top:12px;z-index:7;display:flex;gap:8px}
         .at-btn{height:40px;min-width:40px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;white-space:nowrap}
-        .at-btn:hover{border-color:rgba(255,255,255,.28)}
-        .at-btn.on{border-color:rgba(124,199,255,.75);box-shadow:0 0 0 1px rgba(124,199,255,.35) inset,0 10px 30px rgba(0,0,0,.35)}
-        .at-bar{position:absolute;left:0;right:0;top:0;height:2px;z-index:9;overflow:hidden;pointer-events:none;opacity:0;transition:opacity .3s}
+        .at-btn:hover{border-color:rgba(24,32,40,.3)}
+        .at-btn.on{background:var(--text);color:#fff;border-color:var(--text)}
+        .at-bar{position:absolute;left:0;right:0;top:0;height:3px;z-index:9;overflow:hidden;pointer-events:none;opacity:0;transition:opacity .3s}
         .at-bar.busy{opacity:1}
-        .at-bar i{position:absolute;top:0;height:2px;width:28%;background:linear-gradient(90deg,transparent,var(--amber),transparent);animation:at-run 1.2s ease-in-out infinite}
+        .at-bar i{position:absolute;top:0;height:3px;width:28%;background:linear-gradient(90deg,transparent,var(--amber),transparent);animation:at-run 1.2s ease-in-out infinite}
         @keyframes at-run{0%{left:-28%}100%{left:100%}}
-        .at-msg{position:absolute;left:12px;top:60px;z-index:5;font-size:13px;color:var(--muted);padding:6px 11px;display:none;max-width:min(520px,calc(100% - 24px))}
-        .at-msg.err{color:#ffd9a0}
-        .at-card{position:absolute;right:12px;top:60px;z-index:6;width:330px;max-width:calc(100% - 24px);max-height:calc(100% - 250px);overflow:auto;padding:14px 16px 12px;display:none}
-        .at-card .place{color:var(--muted);font-size:12.5px;margin-bottom:4px}
+        .at-msg{position:absolute;left:50%;transform:translateX(-50%);top:12px;z-index:5;font-size:13px;color:var(--muted);padding:6px 11px;display:none;max-width:min(520px,calc(100% - 24px))}
+        .at-msg.err{color:#8a4b00}
+        .at-card{position:absolute;right:12px;top:60px;z-index:6;width:340px;max-width:calc(100% - 24px);max-height:calc(100% - 250px);overflow:auto;padding:14px 16px 12px;display:none}
+        .at-card .place{color:var(--muted);font-size:12.5px;margin-bottom:4px;padding-right:24px}
         .at-card h3{margin:0 0 10px;font-size:17px;font-weight:600;letter-spacing:-.005em}
         .at-card .row{display:grid;grid-template-columns:18px 1fr;gap:8px;margin:0 0 8px}
         .at-card .row i{width:10px;height:10px;border-radius:3px;margin-top:5px;display:block}
         .at-card .muted{color:var(--muted)}
+        .at-card .sub{color:var(--muted);font-size:12.5px;margin:-4px 0 8px 26px}
         .at-card .x{position:absolute;right:8px;top:8px;border:0;background:none;color:var(--muted);cursor:pointer;width:28px;height:28px;border-radius:8px;font-size:17px;line-height:1}
-        .at-card .x:hover{background:rgba(255,255,255,.08);color:var(--text)}
-        .at-card .acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
-        .at-chip{border:1px solid var(--line);background:rgba(255,255,255,.06);border-radius:999px;padding:5px 12px;cursor:pointer}
-        .at-chip:hover{background:rgba(255,255,255,.12)}
-        .at-card .extra{border-top:1px solid var(--line);margin-top:10px;padding-top:10px;font-size:13px;color:#d6dde2}
+        .at-card .x:hover{background:var(--sel);color:var(--text)}
+        .at-card .flip{border-top:1px solid var(--line);margin-top:10px;padding-top:10px}
+        .at-card .flip .yrs{display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap}
+        .at-chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;cursor:pointer}
+        .at-chip:hover{border-color:rgba(24,32,40,.35)}
+        .at-chip.on{background:var(--text);color:#fff;border-color:var(--text)}
+        .at-spark{margin:2px 0 8px 26px}
+        .at-spark text{font-size:10px;fill:var(--muted)}
         .at-dock{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;z-index:6;width:min(820px,calc(100% - 24px));padding:12px 16px 12px}
-        .at-grow{display:grid;grid-template-columns:40px 1fr 190px;gap:14px;align-items:end}
-        .at-play{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:rgba(255,255,255,.08);cursor:pointer;display:flex;align-items:center;justify-content:center;align-self:center}
-        .at-play:hover{background:rgba(255,255,255,.16)}
+        .at-grow{display:grid;grid-template-columns:40px 1fr 200px;gap:14px;align-items:end}
+        .at-play{width:40px;height:40px;border-radius:50%;border:1px solid var(--line);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;align-self:center}
+        .at-play:hover{border-color:rgba(24,32,40,.35)}
         .at-cols{display:flex;gap:4px;height:74px;align-items:stretch;cursor:pointer;user-select:none;touch-action:none}
         .at-col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:stretch;gap:5px;min-width:0;position:relative}
-        .at-col .b{border-radius:4px 4px 0 0;min-height:2px;background:rgba(255,255,255,.18);transition:background .15s}
+        .at-col .b{border-radius:4px 4px 0 0;min-height:2px;background:rgba(24,32,40,.13)}
         .at-col .y{font-size:11.5px;color:var(--muted);text-align:center;line-height:1}
-        .at-col.past .b{background:rgba(246,183,60,.55)}
-        .at-col.cur .b{background:var(--glow)}
+        .at-col.past .b{background:rgba(230,159,0,.55)}
+        .at-col.cur .b{background:var(--deep)}
         .at-col.cur .y{color:var(--text);font-weight:600}
-        .at-col.pre .b{background:none;border:1px solid rgba(255,255,255,.55);border-bottom:0}
-        .at-col:hover .y{color:var(--text)}
+        .at-col.off{opacity:.35;cursor:default}
+        .at-mid{display:flex;flex-direction:column;gap:2px;min-width:0}
+        .at-slider{width:calc(100% - 100% / 10);margin:0 calc(100% / 20);accent-color:var(--deep);cursor:pointer;height:18px}
         .at-yr{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;min-width:0}
-        .at-yr b{font-size:34px;line-height:1;font-weight:600;letter-spacing:-.02em;font-stretch:90%}
-        .at-yr span{font-size:12.5px;color:var(--muted);margin-top:5px;line-height:1.3}
+        .at-yr b{font-size:32px;line-height:1;font-weight:600;letter-spacing:-.02em}
+        .at-yr span{font-size:12.5px;color:var(--muted);margin-top:5px;line-height:1.35}
         .at-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
-        .at-foot .seg-s{display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:9px}
-        .at-foot .seg-s button{border:0;background:none;color:var(--muted);padding:3px 10px;border-radius:7px;cursor:pointer}
-        .at-foot .seg-s button.on{background:rgba(255,255,255,.13);color:var(--text)}
+        .seg-s{display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:9px;width:max-content}
+        .seg-s button{border:0;background:none;color:var(--muted);padding:3px 10px;border-radius:7px;cursor:pointer}
+        .seg-s button.on{background:var(--text);color:#fff}
         .at-keys{display:flex;gap:14px;flex-wrap:wrap}
         .at-key{display:inline-flex;align-items:center;gap:6px}
         .at-key i{display:inline-block;width:12px;height:12px;border-radius:3px}
-        .at-tip{position:absolute;z-index:10;pointer-events:none;background:var(--glass-hi);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.5px;white-space:nowrap;display:none;transform:translate(-50%,-100%)}
+        .at-tip{position:absolute;z-index:10;pointer-events:none;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.5px;white-space:nowrap;display:none;transform:translate(-50%,-100%);box-shadow:0 4px 14px rgba(20,30,40,.12)}
         .at-sum{display:grid;gap:8px}
         .at-sum h4{margin:0;font-size:14px;font-weight:600}
         .at-sum .line{display:grid;grid-template-columns:14px 1fr;gap:9px;align-items:start}
@@ -1849,33 +1859,24 @@ def _(anywidget, asyncio, traitlets):
         .at-sum b{font-weight:600}
         .at-stack{display:flex;gap:2px;height:12px;border-radius:4px;overflow:hidden}
         .at-stack span{display:block;height:100%}
-        .at-more{position:absolute;right:12px;top:60px;z-index:8;width:310px;padding:8px;display:none}
+        .at-ramp{height:12px;border-radius:4px;width:220px}
+        .at-more{position:absolute;right:12px;top:60px;z-index:8;width:300px;padding:8px;display:none}
         .at-more .item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 10px;border-radius:9px}
-        .at-more .item:hover{background:rgba(255,255,255,.06)}
+        .at-more .item:hover{background:var(--sel)}
         .at-more .item small{display:block;color:var(--muted);font-size:12px}
         .at-more hr{border:0;border-top:1px solid var(--line);margin:4px 6px}
-        .at-sw{position:relative;width:34px;height:20px;flex:0 0 auto;border-radius:999px;background:rgba(255,255,255,.18);border:0;cursor:pointer;transition:background .2s}
+        .at-sw{position:relative;width:34px;height:20px;flex:0 0 auto;border-radius:999px;background:rgba(24,32,40,.2);border:0;cursor:pointer;transition:background .2s}
         .at-sw::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .2s}
         .at-sw.on{background:var(--cool)}
         .at-sw.on::after{left:17px}
         .at-more input[type=range]{width:120px;accent-color:var(--cool)}
-        .at-sub{padding:0 10px 8px;display:none;gap:8px;flex-direction:column}
-        .at-legend-k{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12px;color:var(--muted)}
-        .at-swipe{position:absolute;top:0;bottom:0;width:2px;margin-left:-1px;background:rgba(255,255,255,.9);z-index:4;cursor:col-resize;display:none;touch-action:none;box-shadow:0 0 0 1px rgba(0,0,0,.25)}
-        .at-grip{position:absolute;top:50%;left:50%;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;background:var(--glass-hi);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--text)}
-        .at-tag{position:absolute;top:66px;padding:4px 10px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
-        .at-tag.l{right:12px}
-        .at-tag.r{left:12px}
-        .at-about{position:absolute;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(5,7,9,.55)}
-        .at-about .box{width:min(620px,calc(100% - 32px));max-height:calc(100% - 64px);overflow:auto;padding:22px 26px;line-height:1.55}
+        .at-imgtag{position:absolute;left:50%;transform:translateX(-50%);top:56px;z-index:6;padding:6px 14px;font-weight:600;display:none;white-space:nowrap}
+        .at-about{position:absolute;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(20,30,40,.35)}
+        .at-about .box{width:min(620px,calc(100% - 32px));max-height:calc(100% - 64px);overflow:auto;padding:22px 26px;line-height:1.55;background:#fff}
         .at-about h2{margin:0 0 10px;font-size:22px;font-weight:600;letter-spacing:-.01em}
-        .at-about p{margin:0 0 10px;color:#d6dde2;max-width:66ch}
+        .at-about p{margin:0 0 10px;max-width:66ch}
         .at-about small{color:var(--muted)}
-        .at .maplibregl-ctrl-group{background:var(--glass);border:1px solid var(--line);box-shadow:none;border-radius:10px;backdrop-filter:blur(14px)}
-        .at .maplibregl-ctrl-group button+button{border-top:1px solid var(--line)}
-        .at .maplibregl-ctrl-group button .maplibregl-ctrl-icon{filter:invert(1)}
-        .at .maplibregl-ctrl-attrib{background:rgba(13,16,19,.6);color:var(--muted)}
-        .at .maplibregl-ctrl-attrib a{color:var(--muted)}
+        .at .maplibregl-ctrl-group{border:1px solid var(--line);box-shadow:0 6px 22px rgba(20,30,40,.14);border-radius:10px}
         .at .maplibregl-ctrl-bottom-right{bottom:0}
         @media (max-width:760px){.at-top{max-width:calc(100% - 24px)}.at-search{width:calc(100vw - 48px)}.at-grow{grid-template-columns:36px 1fr}.at-yr{grid-column:1/-1;flex-direction:row;align-items:baseline;gap:10px}.at-yr span{min-width:0}.at-col .y{font-size:9.5px}.at-card{top:auto;bottom:270px;max-height:38%}.at-tools{top:108px;right:12px}.at-btn span{display:none}}
         @media (prefers-reduced-motion:reduce){.at-bar i{animation:none;left:0;width:100%}}
@@ -1886,26 +1887,25 @@ def _(anywidget, asyncio, traitlets):
         import {MapboxOverlay} from "https://esm.sh/@deck.gl/mapbox@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {BitmapLayer, PathLayer} from "https://esm.sh/@deck.gl/layers@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {TileLayer, H3HexagonLayer} from "https://esm.sh/@deck.gl/geo-layers@9.3.10?deps=@deck.gl/core@9.3.10,@deck.gl/extensions@9.3.10,@deck.gl/layers@9.3.10,@deck.gl/mesh-layers@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
-        import {ClipExtension} from "https://esm.sh/@deck.gl/extensions@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import * as arrow from "https://esm.sh/apache-arrow@18.1.0";
         import {GeoArrowPolygonLayer} from "https://esm.sh/@geoarrow/deck.gl-layers@0.3.2?deps=@deck.gl/core@9.3.10,@deck.gl/layers@9.3.10,@deck.gl/geo-layers@9.3.10,@deck.gl/aggregation-layers@9.3.10,@deck.gl/extensions@9.3.10,@deck.gl/mesh-layers@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {latLngToCell, getResolution, cellToBoundary} from "https://esm.sh/h3-js@4.5.0";
         import {Protocol as PMProtocol} from "https://esm.sh/pmtiles@4.5.0";
         maplibregl.addProtocol("pmtiles", new PMProtocol().tile);
 
-        // a dark basemap for labels and for where the imagery stops; the
-        // imagery is the picture (Stephen, 2026-09-24: "I was hoping to see
-        // some imagery")
-        const STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
+        // a regular basemap; the imagery is a layer you add (Stephen,
+        // 2026-09-24: "we can have a base map, like a regular base map, and
+        // then add the imagery if we want it")
+        const STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
         const FONTS = "https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&display=swap";
 
-        // the data colours: amber for built (new is bright, older dimmer, one
-        // hue, luminance carries the year), a cool blue for "the map and WSF
-        // disagree", white outlines for what was already standing. Nothing
-        // hangs on red vs green.
-        const AMBER = [246, 183, 60], GLOW = [255, 214, 120], COOL = [124, 199, 255], WHITE = [255, 255, 255];
-        const SRC = [[86, 180, 233], [230, 159, 0], [240, 228, 66], [204, 121, 167]], OTHER = [178, 184, 190];
-        const hex = (c) => "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
+        // the data colours: amber for built or changed (the timeline's year
+        // deep amber, the years before it lighter: one hue, lightness carries
+        // the year), grey outlines for what already stood in 2016, blue for
+        // "the map and WSF disagree". Nothing hangs on red vs green.
+        const DEEP = [184, 92, 0], AMBER = [230, 159, 0], GREY = [96, 106, 116], WHITE = [255, 255, 255], COOL = [0, 114, 178];
+        const SRC = [[0, 114, 178], [230, 159, 0], [204, 121, 167], [86, 180, 233]], OTHER = [150, 156, 162];
+        const MONTH = ["", "Jan", "Jul"];
         const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
         const fmt = (n) => Number(n).toLocaleString("en-US");
 
@@ -1922,12 +1922,22 @@ def _(anywidget, asyncio, traitlets):
           search: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
           play: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>',
           pause: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg>',
-          compare: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>',
+          image: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6"/></svg>',
           more: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
           expand: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
           shrink: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
-          grip: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 7-5 5 5 5M15 7l5 5-5 5"/></svg>',
         };
+
+        // WSF index k (1..20): the half-year it books. 1 = built by July
+        // 2016; even k = July of its year to January of the next; odd k = January to July
+        const wsfYear = (k) => 2016 + Math.floor((k - 1) / 2);
+        function wsfWindow(k) {
+          if (k <= 0) return null;
+          if (k === 1) return "by July 2016";
+          const y = wsfYear(k);
+          return k % 2 === 0 ? `between July ${y} and January ${y + 1}` : `between January ${y} and July ${y}`;
+        }
+        const wsfYearWindow = (y) => (y === 2016 ? "July 2016 to January 2017" : `January ${y} to January ${y + 1}`);
 
         function render({model, el}) {
           let cfg = {};
@@ -1940,120 +1950,106 @@ def _(anywidget, asyncio, traitlets):
           el.appendChild(mlcss);
 
           const S2Y = cfg.s2_years || [2022, 2023, 2024, 2025];
+          // AlphaEarth in viridis, as the slider had it (Stephen, 2026-09-24:
+          // "go back to Viridis"): opaque fills, quiet cells faint grey
+          const VIR = (cfg.viridis || "440154fde725").match(/.{6}/g).map((h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)));
+          const vir = (t) => { t = Math.max(0, Math.min(1, t)) * (VIR.length - 1); const i = Math.min(VIR.length - 2, Math.floor(t)), f = t - i; return VIR[i].map((v, j) => Math.round(v + (VIR[i + 1][j] - v) * f)); };
+          const virYear = (y) => vir((y - 2018) / 7);
+          const A_FILL = cfg.alpha_fill || 235, A_QUIET = cfg.alpha_quiet || 70, QUIET = [200, 200, 200];
+          const virCss = (n) => Array.from({length: n}, (_, i) => `rgb(${vir(i / (n - 1)).join(",")})`).join(",");
           const YMIN = 2016, YMAX = 2025, BLDZ = cfg.bld_zoom || 13, HEXZ = cfg.hex_zoom || 9;
+          // the layers, on or off, as in the slider (B W A S); the buildings'
+          // colour (Q steps through it); the AlphaEarth fill; the timeline's year
           const st = {
-            lens: "growth", Y: YMAX, witness: "wsf", playing: false,
-            compare: false, cmpStyle: "swipe", cmpA: S2Y[0], cmpB: S2Y[S2Y.length - 1],
-            hex: false, labels: true, s2scale: Number(cfg.s2_scale) || 1, fill: cfg.fill, y0: cfg.aef_from, y1: cfg.aef_to,
-            fit: !!cfg.fit, picked: -1,
+            on: Object.assign({bld: true, wsf: false, hex: false, img: false}, cfg.layers0 || {}),
+            bfill: "wyear", Y: YMAX, playing: false, gmode: "when", y0: 2017, y1: 2025,
+            imgYear: S2Y[S2Y.length - 1], labels: true, s2scale: Number(cfg.s2_scale) || 1,
+            fit: !!cfg.fit, picked: -1, flip: null,
           };
-          const s2For = (y) => { let best = S2Y[0]; for (const s of S2Y) if (s <= y) best = s; return best; };
 
           // ---- the frame ----------------------------------------------------
           const root = el_("div", "at");
           const pane = el_("div", "at-pane");
-          const mapElS = el_("div", "at-map at-map-l");
           const mapEl = el_("div", "at-map");
-          const swipe = el_("div", "at-swipe");
-          swipe.appendChild(el_("div", "at-grip", ICON.grip));
-          const tagA = el_("button", "at-tag l at-glass"), tagB = el_("button", "at-tag r at-glass");
-          tagA.title = "the earlier image: click for another year"; tagB.title = "the later image: click for another year";
-          swipe.append(tagA, tagB);
           const bar = el_("div", "at-bar", "<i></i>");
           const msg = el_("div", "at-msg at-glass");
-          pane.append(mapElS, mapEl, swipe, bar, msg);
+          const imgTag = el_("div", "at-imgtag at-glass");
+          pane.append(mapEl, bar, msg, imgTag);
           root.appendChild(pane);
           el.appendChild(root);
 
-          // top left: find a place, the lens
           const top = el_("div", "at-top");
           const search = el_("div", "at-search at-glass", ICON.search);
           const gc = el_("input"); gc.type = "search"; gc.placeholder = "Search a place"; gc.autocomplete = "off"; gc.spellcheck = false;
           const hits = el_("div", "at-hits at-glass");
           search.append(gc, hits);
-          const lensSeg = el_("div", "at-seg at-glass");
-          const LENSES = [["growth", "Growth", "buildings lit by the year they were first seen built"],
-                          ["check", "Map check", "where the map and WSF disagree"],
-                          ["sources", "Sources", "which dataset each building on the map comes from"]];
-          const lensBtns = LENSES.map(([k, label, title], i) => {
-            const b = el_("button", "", label); b.title = `${title} (${i + 1})`;
-            b.onclick = () => setLens(k); lensSeg.appendChild(b); return b;
-          });
-          top.append(search, lensSeg);
+          const BFILLS = [["wyear", "WSF year", "lit by when WSF first saw them built"], ["ayear", "AlphaEarth year", "lit by the first year their ground's AlphaEarth numbers jumped (reads nine years for the area, the first time takes a moment)"],
+                          ["check", "Map check", "blue: on the map but never built-up to WSF; amber: built-up ground 20 m or more from any building on the map"], ["source", "Source", "the dataset each building came from"]];
+          const LAYERS = [["bld", "Buildings", "Overture building footprints, from zoom " + BLDZ + " (B)"], ["wsf", "WSF", "WSF built-up ground, lit by when it was first seen built (W)"],
+                          ["hex", "AlphaEarth", "AlphaEarth hexagons: the year the ground changed, or how much, from zoom " + HEXZ + " (A)"], ["img", "Imagery", "Sentinel-2 yearly imagery (S or I)"]];
+          const panel = el_("div", "at-panel at-glass");
+          const rowOf = (label) => { const r = el_("div", "at-row"); r.appendChild(el_("span", "at-lab", label)); panel.appendChild(r); return r; };
+          const segOf = (row, items, isOn, onClick) => {
+            const seg = el_("div", "seg-s");
+            const bs = items.map(([k, label, title]) => { const b = el_("button", "", label); b.title = title || ""; b.onclick = () => onClick(k); seg.appendChild(b); return b; });
+            row.appendChild(seg);
+            return () => items.forEach(([k], i) => bs[i].classList.toggle("on", isOn(k)));
+          };
+          const rLayers = rowOf("Layers");
+          const styleLayers = segOf(rLayers, LAYERS, (k) => !!st.on[k], (k) => toggleLayer(k));
+          const rBld = rowOf("Buildings");
+          const styleBfill = segOf(rBld, BFILLS, (k) => k === st.bfill, (k) => setBfill(k));
+          const rHex = rowOf("AlphaEarth");
+          const styleHex = segOf(rHex, [["when", "Year it changed", "the year the ground first changed clearly"], ["much", "How much", "how much the ground changed over the years"]], (k) => k === st.gmode, (k) => { st.gmode = k; recolorHex(); styleRows(); renderDock(); update(); });
+          const rImg = rowOf("Imagery");
+          const styleImgRow = segOf(rImg, S2Y.map((y) => [y, String(y), "the Sentinel-2 mosaic of " + y + " ([ ] step, F first or last)"]), (k) => k === st.imgYear, (k) => { stopFlip(true); st.imgYear = k; styleRows(); update(); });
+          function styleRows() {
+            styleLayers(); styleBfill(); styleHex(); styleImgRow();
+            rBld.style.display = st.on.bld ? "" : "none";
+            rHex.style.display = st.on.hex ? "" : "none";
+            rImg.style.display = st.on.img ? "" : "none";
+          }
+          top.append(search, panel);
           pane.appendChild(top);
 
-          // top right: compare, more, fill the window
           const tools = el_("div", "at-tools");
-          const bCompare = el_("button", "at-btn at-glass", ICON.compare + "<span>Compare</span>");
-          bCompare.title = "before and after: two years of imagery on either side of a divider (C)";
-          const bMore = el_("button", "at-btn at-glass", ICON.more); bMore.title = "more layers and settings";
+          const bMore = el_("button", "at-btn at-glass", ICON.more); bMore.title = "settings and about";
           const bFit = el_("button", "at-btn at-glass", ICON.expand); bFit.title = "fill the window (X)";
-          tools.append(bCompare, bMore, bFit);
+          tools.append(bMore, bFit);
           pane.appendChild(tools);
 
           // the more menu
           const more = el_("div", "at-more at-glass");
-          const item = (title, sub, ctl) => { const r = el_("div", "item"); const t = el_("div", "", `${title}${sub ? `<small>${sub}</small>` : ""}`); r.append(t, ctl); more.appendChild(r); return r; };
+          const item = (title, sub, ctl) => { const r = el_("div", "item"); r.append(el_("div", "", `${title}${sub ? `<small>${sub}</small>` : ""}`), ctl); more.appendChild(r); return r; };
           const sw = (get, set) => { const b = el_("button", "at-sw"); b.setAttribute("role", "switch"); const sty = () => { b.classList.toggle("on", !!get()); b.setAttribute("aria-checked", String(!!get())); }; b.onclick = () => { set(!get()); sty(); }; sty(); b.sty = sty; return b; };
-          const swHex = sw(() => st.hex, (v) => { st.hex = v; hexSub.style.display = v ? "flex" : "none"; send("layers"); update(); });
-          item("AlphaEarth hexagons", "how much the ground's fingerprint changed, from zoom 9", swHex);
-          const hexSub = el_("div", "at-sub");
-          const hexFillSeg = el_("div", "seg-s");
-          const fills = cfg.fills || [];
-          const fillBtns = fills.map(([k, label, title]) => { const b = el_("button", "", label); b.title = title; b.onclick = () => { st.fill = k; styleFill(); send("fill"); }; hexFillSeg.appendChild(b); return b; });
-          const styleFill = () => fills.forEach(([k], i) => fillBtns[i].classList.toggle("on", k === st.fill));
-          styleFill();
-          const hexWin = el_("div", "", "");
-          hexWin.style.cssText = "display:flex;gap:8px;align-items:center;font-size:12.5px;color:var(--muted)";
-          const aefYears = cfg.aef_years || [];
-          const selY = (v, onch) => { const s = el_("select"); s.style.cssText = "background:rgba(255,255,255,.08);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:3px 6px;font:inherit"; for (const y of aefYears) { const o = el_("option", "", String(y)); o.value = y; s.appendChild(o); } s.value = v; s.onchange = () => onch(Number(s.value)); return s; };
-          const w0 = selY(st.y0, (v) => { if (v < st.y1) { st.y0 = v; send("aef"); } else w0.value = st.y0; });
-          const w1 = selY(st.y1, (v) => { if (v > st.y0) { st.y1 = v; send("aef"); } else w1.value = st.y1; });
-          hexWin.append(document.createTextNode("years"), w0, document.createTextNode("to"), w1);
-          const hexLeg = el_("div", "at-legend-k");
-          hexSub.append(hexFillSeg, hexWin, hexLeg);
-          hexSub.querySelectorAll(".seg-s").forEach(() => {});
-          hexFillSeg.className = "seg-s"; hexFillSeg.style.cssText = "display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:9px;width:max-content";
-          more.appendChild(hexSub);
-          const swLab = sw(() => st.labels, (v) => { st.labels = v; labels(v); send("labels"); });
-          item("Place names", "", swLab);
           const gam = el_("input"); gam.type = "range"; gam.min = 0.3; gam.max = 2.5; gam.step = 0.1; gam.value = st.s2scale;
           gam.title = "imagery brightness (gamma); double-click for 1.0";
           let gamT = null;
           gam.oninput = () => { st.s2scale = Number(gam.value); clearTimeout(gamT); gamT = setTimeout(() => send("s2scale"), 250); };
           gam.ondblclick = () => { gam.value = 1; gam.oninput(); };
-          item("Imagery brightness", "Sentinel-2 yearly mosaic", gam);
-          const cmpSeg = el_("div", "seg-s"); cmpSeg.style.cssText = "display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:9px";
-          const cmpBtns = [["swipe", "Swipe"], ["pair", "Side by side"]].map(([k, label]) => { const b = el_("button", "", label); b.onclick = () => { st.cmpStyle = k; styleCmp(); applyLayout(); }; cmpSeg.appendChild(b); return b; });
-          const styleCmp = () => { cmpBtns[0].classList.toggle("on", st.cmpStyle === "swipe"); cmpBtns[1].classList.toggle("on", st.cmpStyle === "pair"); };
-          styleCmp();
-          item("Compare as", "", cmpSeg);
+          item("Imagery brightness", "; and ' step it", gam);
+          const swLab = sw(() => st.labels, (v) => { st.labels = v; labels(v); send("labels"); });
+          item("Place names", "", swLab);
           more.appendChild(el_("hr"));
           const bAbout = el_("button", "at-chip", "About this map"); bAbout.style.margin = "4px 10px 6px";
           more.appendChild(bAbout);
           pane.appendChild(more);
-          more.querySelectorAll(".seg-s button").forEach((b) => { b.style.cssText = "border:0;background:none;color:inherit;padding:3px 10px;border-radius:7px;cursor:pointer"; });
-          const segOnCss = () => more.querySelectorAll(".seg-s button").forEach((b) => { b.style.background = b.classList.contains("on") ? "rgba(255,255,255,.13)" : "none"; b.style.color = b.classList.contains("on") ? "var(--text)" : "var(--muted)"; });
 
-          // the card: what was clicked
           const card = el_("div", "at-card at-glass");
           pane.appendChild(card);
-
-          // the dock: the timeline (growth) or the view's numbers
           const dock = el_("div", "at-dock at-glass");
           pane.appendChild(dock);
           const tip = el_("div", "at-tip");
           pane.appendChild(tip);
 
-          // about
           const about = el_("div", "at-about");
           about.innerHTML = `<div class="box at-glass">
             <h2>Buildings on the map, checked against the ground</h2>
-            <p>The picture is the Sentinel-2 yearly mosaic (2022 to 2025). Over it are the building footprints from Overture Maps, each lit by the year it was first seen built.</p>
-            <p><b>Growth</b> dates each building by the year the World Settlement Footprint tracker first read the ground under it as built-up (half-yearly, July 2016 to January 2026), or, if you switch the witness, by the first year its AlphaEarth fingerprint jumped. Bright amber is the year on the timeline, dimmer amber the years before it, a white outline was already standing in 2016. Play the timeline to watch the place fill in. Zoomed out, the same colours paint WSF's built-up ground.</p>
-            <p><b>Map check</b> shows where the two disagree: buildings on the map that WSF has never read as built-up (blue), and built-up ground with no building on the map (amber).</p>
-            <p><b>Sources</b> shows which dataset each building came from. Click anything for its account. <b>Compare</b> puts two years of imagery either side of a divider.</p>
-            <p><small>Keys: ← → year · space play · 1 2 3 lens · C compare · X fill the window · / search · Esc close.</small></p>
+            <p>Turn the layers on and off in the panel at the top left. <b>Buildings</b>: the footprints from Overture Maps, each lit by when the World Settlement Footprint tracker (WSF) first read the ground under it as built-up. WSF looks twice a year, July 2016 to January 2026, at 10 m. Deep amber is the year on the timeline, lighter amber the years before it, a grey outline was already standing in 2016. Zoomed out, the same colours paint WSF's built-up ground. You can switch the date to AlphaEarth's instead.</p>
+            <p><b>AlphaEarth</b>: describes every 10 m of ground with 64 numbers a year, 2017 to 2025. When those numbers jump from one year to the next by more than they do on ground WSF says stayed the same (the quiet level), the ground changed that year: building, clearing, water, fields. Hexagons show the year it changed, or how much.</p>
+            <p>The buildings can also be coloured for a <b>map check</b>: buildings on the map WSF never read as built-up (blue), and built-up ground 20 m or more from any building on the map (amber); or by <b>source</b>, the dataset each came from.</p>
+            <p><b>Imagery</b> adds the Sentinel-2 yearly mosaic (2022 to 2025). Click something that changed in 2023 to 2025 and the imagery flips between the year before and the year after on its own.</p>
+            <p><small>Keys: B W A S the layers; Q the buildings' colour; arrows the timeline year, space play; [ ] and F the imagery year, ; and ' its brightness; 1 to 9 the choices in the last row shown; - = and _ + the AlphaEarth years; L place names; X fill the window; / search; Esc close.</small></p>
             <p><small>WSF Tracker (c) DLR and MindEarth. AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Overture Maps buildings and divisions (ODbL). Photon over OpenStreetMap (ODbL). Basemap by Carto. Overture release ${cfg.ov_release || ""}.</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
           pane.appendChild(about);
@@ -2061,20 +2057,21 @@ def _(anywidget, asyncio, traitlets):
           about.onclick = (e) => { if (e.target === about) about.style.display = "none"; };
           bAbout.onclick = () => { more.style.display = "none"; about.style.display = "flex"; };
 
-          const send = (act) => {
-            model.set("ctl", JSON.stringify({act, on: {bld: true, wsf: false, hex: st.hex, s2: true}, s2y: s2For(st.Y), s2scale: st.s2scale, fill: st.fill,
-              y0: st.y0, y1: st.y1, labels: st.labels, witness: st.witness, n: Date.now()}));
+          const send = (act, extra) => {
+            model.set("ctl", JSON.stringify(Object.assign({act, on: {bld: st.on.bld, wsf: st.on.wsf, hex: st.on.hex, s2: st.on.img}, s2scale: st.s2scale,
+              labels: st.labels, witness: st.bfill === "ayear" ? "aef" : "wsf", y0: st.y0, y1: st.y1, n: Date.now()}, extra || {})));
             model.save_changes();
           };
 
-          // ---- status: a thin moving line while loading, words only on failure
+          // ---- status ------------------------------------------------------------
           const ERR = /failed|error|no match|search:|timed? ?out|^(deck|map|footprints|load|boot|\w+ tile):/i;
           let msgT = null;
           const note = (t, ms) => { msg.textContent = t; msg.style.display = t ? "block" : "none"; msg.classList.toggle("err", ERR.test(t)); clearTimeout(msgT); if (ms) msgT = setTimeout(() => { msg.style.display = "none"; }, ms); };
           const say = (t) => {
             t = (t || "").replace(/​/g, "");
             if (ERR.test(t)) { note(t); bar.classList.remove("busy"); return; }
-            if (/more than [\d,]+ footprints/.test(t)) { note("Too many buildings here to draw at once: zoom in a little."); }
+            const many = /more than [\d,]+ footprints/.test(t);
+            if (many) note("Too many buildings here to draw at once: zoom in a little.");
             const busy = t.split(" · ").filter((p) => p.includes("…"));
             const names = [];
             for (const p of busy) {
@@ -2083,10 +2080,10 @@ def _(anywidget, asyncio, traitlets):
             }
             bar.classList.toggle("busy", names.length > 0);
             if (names.length) note("Loading " + names.join(" and ") + "…");
-            else if (!/more than [\d,]+ footprints/.test(t)) note("");
+            else if (!many) note("");
           };
 
-          // ---- tiles: ask the kernel ------------------------------------------
+          // ---- tiles ----------------------------------------------------------------
           const pending = new Map();
           let tseq = 0;
           const tstat = {asked: 0, got: 0, empty: 0, err: 0, abort: 0};
@@ -2108,7 +2105,6 @@ def _(anywidget, asyncio, traitlets):
           });
           const pngBitmap = (u8) => createImageBitmap(new Blob([u8], {type: "image/png"}), {premultiplyAlpha: "none", colorSpaceConversion: "none"});
 
-          // the WSF index tiles: decoded once, coloured for the current year
           const rawTiles = new Map();
           async function rawTile({index, signal, bbox}) {
             const u8 = await ask("wsfidx", 0, index, signal);
@@ -2126,17 +2122,18 @@ def _(anywidget, asyncio, traitlets):
             countsSoon();
             return t;
           }
-          const wsfYear = (k) => 2016 + Math.floor((k - 1) / 2);
-          // the growth colours for the index k (1..20) at timeline year Y
+          // the year ramp shared by every layer: deep amber for the year
+          // shown, lighter for the years before, nothing for later years
+          const rampA = (y, Y) => { const t = (y - 2016) / Math.max(1, Y - 1 - 2016); return 70 + 100 * t; };
           function growthLUT(Y) {
             const lut = new Uint8ClampedArray(256 * 4);
             for (let k = 1; k <= 20; k++) {
               const yr = wsfYear(k), o = 4 * k;
               let c = null, a = 0;
-              if (k === 1) { c = WHITE; a = 70; }
-              else if (yr > Y) { a = 0; }
-              else if (yr === Y) { c = GLOW; a = 255; }
-              else { const t = (yr - 2016) / Math.max(1, Y - 1 - 2016); c = AMBER; a = 90 + 120 * t; }
+              if (k === 1) { c = GREY; a = 55; }
+              else if (yr > Y) a = 0;
+              else if (yr === Y) { c = DEEP; a = 235; }
+              else { c = AMBER; a = rampA(yr, Y); }
               if (c) { lut[o] = c[0]; lut[o + 1] = c[1]; lut[o + 2] = c[2]; lut[o + 3] = a; }
             }
             return lut;
@@ -2152,56 +2149,82 @@ def _(anywidget, asyncio, traitlets):
             return c;
           }
 
-          // ---- the footprints: GeoArrow table + per-footprint attributes -----
+          // ---- the footprints ---------------------------------------------------------
           let polys = null, polysSeq = 0, attrs = null, meta = {}, fillVec = null, lineVec = null, colSeq = 0;
           const RGBA = new arrow.FixedSizeList(4, new arrow.Field("rgba", new arrow.Uint8(), false));
           const vecOf = (u8, n) => arrow.makeVector(arrow.makeData({type: RGBA, length: n, nullCount: 0,
             child: arrow.makeData({type: new arrow.Uint8(), length: 4 * n, nullCount: 0, data: u8})}));
-          // code bytes per footprint: [0] WSF (0 never, 1 standing by July
-          // 2016, else year - 2000), [1] AlphaEarth (0 not read, 1 no jump, 2
-          // no data, else year - 2000), [2] source index, [3] last touched (year - 2000, 0 none)
+          // per footprint: [0] WSF index 0..20, [1] AlphaEarth (0 not read, 1 no
+          // jump, 2 no data, else year - 2000), [2] source index, [3] last touched
           function yearOf(i) {
-            const c = attrs[4 * i + (st.witness === "aef" ? 1 : 0)];
-            if (st.witness === "aef") return c >= 16 ? 2000 + c : (c === 1 ? -1 : 0);  // -1 standing (no jump), 0 unknown
-            return c >= 16 ? 2000 + c : (c === 1 ? -1 : 0);
+            if (st.bfill === "ayear") { const c = attrs[4 * i + 1]; return c >= 16 ? 2000 + c : (c === 1 ? -1 : 0); }
+            const k = attrs[4 * i];
+            return k === 0 ? 0 : (k === 1 ? -1 : wsfYear(k));
           }
           function recolor() {
             const n = polys ? polys.numRows : 0;
             if (!n || !attrs || attrs.length !== 4 * n) { fillVec = lineVec = null; return; }
             const F = new Uint8Array(4 * n), L = new Uint8Array(4 * n);
             const put = (A, i, c, a) => { A[4 * i] = c[0]; A[4 * i + 1] = c[1]; A[4 * i + 2] = c[2]; A[4 * i + 3] = a; };
-            const Y = st.Y;
+            const Y = st.Y, img = st.on.img, base = img ? WHITE : GREY;
+            // over imagery the footprints are outlines only: colour on colour reads as neither
+            const fillK = img ? 0 : 1;
             for (let i = 0; i < n; i++) {
-              if (st.lens === "growth") {
+              if (st.bfill === "wyear" || st.bfill === "ayear") {
                 const y = yearOf(i);
-                if (y === -1) { put(L, i, WHITE, 120); }
-                else if (y === 0) { put(L, i, WHITE, 55); }
-                else if (y > Y) { /* not yet built: not drawn */ }
-                else if (y === Y) { put(F, i, GLOW, 235); put(L, i, WHITE, 255); }
-                else { const t = (y - 2016) / Math.max(1, Y - 1 - 2016); put(F, i, AMBER, 70 + 110 * t); put(L, i, AMBER, 170 + 70 * t); }
-              } else if (st.lens === "check") {
-                if (attrs[4 * i] === 0) { put(F, i, COOL, 120); put(L, i, COOL, 255); }
-                else put(L, i, WHITE, 80);
+                if (y === -1) put(L, i, base, img ? 120 : 110);
+                else if (y === 0) put(L, i, base, img ? 70 : 60);
+                else if (y > Y) { /* later: not drawn */ }
+                else if (y === Y) { put(F, i, DEEP, 225 * fillK); put(L, i, img ? [255, 190, 90] : DEEP, 255); }
+                else { const a = rampA(y, Y); put(F, i, AMBER, a * fillK); put(L, i, AMBER, img ? 230 : Math.min(255, a + 70)); }
+              } else if (st.bfill === "check") {
+                if (attrs[4 * i] === 0) { put(F, i, COOL, 110 * fillK); put(L, i, img ? [120, 200, 255] : COOL, 255); }
+                else put(L, i, base, img ? 90 : 80);
               } else {
                 const s = attrs[4 * i + 2];
                 const c = s < SRC.length ? SRC[s] : OTHER;
-                put(F, i, c, 130); put(L, i, c, 255);
+                put(F, i, c, 120 * fillK); put(L, i, c, 255);
               }
             }
-            if (st.picked >= 0 && st.picked < n) { put(F, st.picked, COOL, 90); put(L, st.picked, COOL, 255); }
+            if (st.picked >= 0 && st.picked < n) { put(F, st.picked, COOL, 70 * fillK); put(L, st.picked, img ? [120, 200, 255] : COOL, 255); }
             fillVec = vecOf(F, n); lineVec = vecOf(L, n); colSeq++;
           }
 
-          // ---- the counts: the timeline's bars and the view's numbers ---------
+          // ---- the hexagons (AlphaEarth) ---------------------------------------------------
+          let hexes = [], N = 0, res = -1, hexIndex = new Map(), hattrs = null, hmeta = {}, hcol = null, hexSeq = 0, hover = null;
+          // per hexagon: [0] AlphaEarth change year (0 no data, 1 no single
+          // year, else year - 2000), [1] how much it changed 1..255, [2] WSF new share, [3] WSF built share
+          function recolorHex() {
+            if (!N || !hattrs || hattrs.length !== 4 * N) { hcol = null; return; }
+            hcol = new Uint8Array(4 * N);
+            const Y = st.Y;
+            for (let i = 0; i < N; i++) {
+              const o = 4 * i, c = hattrs[o];
+              let col = null, a = 0;
+              if (st.gmode === "when") {
+                // changed by the timeline's year: its year in viridis; no single
+                // year, or changed later than the timeline's year: faint grey
+                if (c >= 16 && 2000 + c <= Y) { col = virYear(2000 + c); a = A_FILL; }
+                else if (c >= 1) { col = QUIET; a = A_QUIET; }
+              } else {
+                const s = hattrs[o + 1];
+                if (s) { col = vir((s - 1) / 254); a = A_FILL; }
+              }
+              if (col) { hcol[o] = col[0]; hcol[o + 1] = col[1]; hcol[o + 2] = col[2]; hcol[o + 3] = a; }
+            }
+            hexSeq++;
+          }
+
+          // ---- counts for the timeline ------------------------------------------------------
           let counts = null;
           function countFootprints() {
             const n = polys ? polys.numRows : 0;
             if (!n || !attrs) return null;
-            const c = {kind: "bld", years: {}, pre: 0, never: 0, total: n, src: {}, touched: {}};
+            const c = {kind: "bld", years: {}, pre: 0, never: 0, total: n, src: {}};
             for (let y = YMIN; y <= YMAX; y++) c.years[y] = 0;
             for (let i = 0; i < n; i++) {
               const y = yearOf(i);
-              if (y >= YMIN) c.years[y] = (c.years[y] || 0) + 1;
+              if (y >= YMIN) c.years[y]++;
               else if (y === -1) c.pre++;
               if (attrs[4 * i] === 0) c.never++;
               const s = attrs[4 * i + 2];
@@ -2209,46 +2232,50 @@ def _(anywidget, asyncio, traitlets):
             }
             return c;
           }
+          const inView = (bb, b) => !(bb.east < b.getWest() || bb.west > b.getEast() || bb.north < b.getSouth() || bb.south > b.getNorth());
           function countRaster() {
             if (!map) return null;
             const b = map.getBounds();
             let zmax = -1;
-            for (const t of rawTiles.values()) {
-              const bb = t.bbox; if (!bb) continue;
-              if (bb.east < b.getWest() || bb.west > b.getEast() || bb.north < b.getSouth() || bb.south > b.getNorth()) continue;
-              if (t.z > zmax) zmax = t.z;
-            }
+            for (const t of rawTiles.values()) if (t.bbox && inView(t.bbox, b) && t.z > zmax) zmax = t.z;
             if (zmax < 0) return null;
             const h = new Float64Array(21);
-            for (const t of rawTiles.values()) {
-              const bb = t.bbox; if (!bb || t.z !== zmax) continue;
-              if (bb.east < b.getWest() || bb.west > b.getEast() || bb.north < b.getSouth() || bb.south > b.getNorth()) continue;
-              for (let i = 0; i < t.k.length; i++) h[t.k[i]]++;
-            }
+            for (const t of rawTiles.values()) { if (!t.bbox || t.z !== zmax || !inView(t.bbox, b)) continue; for (let i = 0; i < t.k.length; i++) h[t.k[i]]++; }
             const c = {kind: "px", years: {}, pre: h[1], total: 0};
             for (let y = YMIN; y <= YMAX; y++) c.years[y] = 0;
             for (let k = 2; k <= 20; k++) c.years[wsfYear(k)] += h[k];
             for (let k = 1; k <= 20; k++) c.total += h[k];
             return c;
           }
+          function countHex() {
+            if (!N || !hattrs) return null;
+            const c = {kind: "hex", years: {}, total: 0, quiet: 0, km2: hmeta.km2 || 0};
+            for (let y = YMIN; y <= YMAX; y++) c.years[y] = 0;
+            for (let i = 0; i < N; i++) { const v = hattrs[4 * i]; if (v >= 16) { c.years[2000 + v]++; c.total++; } else if (v === 1) c.quiet++; }
+            return c;
+          }
           let countT = null;
-          function countsSoon() { clearTimeout(countT); countT = setTimeout(() => { recount(); }, 180); }
+          function countsSoon() { clearTimeout(countT); countT = setTimeout(recount, 180); }
           const bldUp = () => !!(polys && polys.numRows && map && map.getZoom() >= BLDZ);
-          function recount() { counts = bldUp() ? countFootprints() : countRaster(); renderDock(); }
+          // the timeline counts what is on: the buildings (when drawn and lit
+          // by a year), else the AlphaEarth hexagons, else WSF's ground
+          const tlKind = () => (st.on.bld && bldUp() && (st.bfill === "wyear" || st.bfill === "ayear") ? "bld" : st.on.hex ? "hex" : st.on.wsf ? "px" : (st.on.bld && (st.bfill === "wyear" || st.bfill === "ayear") ? "wait" : null));
+          function recount() {
+            const k = tlKind();
+            counts = k === "bld" ? countFootprints() : k === "hex" ? countHex() : k === "px" ? countRaster() : null;
+            renderDock();
+          }
 
-          // ---- the dock -------------------------------------------------------
-          let dockLens = null, colsEl = null, yrEl = null, keysEl = null, playBtn = null, witnessSeg = null;
-          function buildGrowth() {
+          // ---- the dock ---------------------------------------------------------------------
+          let dockKind = null, colsEl = null, yrEl = null, footEl = null, playBtn = null, sliderEl = null;
+          const minY = () => { const k = tlKind(); return k === "hex" || (k === "bld" && st.bfill === "ayear") ? 2018 : YMIN; };
+          function buildTimeline() {
             dock.innerHTML = "";
             const g = el_("div", "at-grow");
             playBtn = el_("button", "at-play", ICON.play); playBtn.title = "play the years (space)";
             playBtn.onclick = () => togglePlay();
             colsEl = el_("div", "at-cols"); colsEl.setAttribute("role", "slider"); colsEl.setAttribute("aria-label", "year"); colsEl.tabIndex = 0;
-            for (let y = YMIN; y <= YMAX; y++) {
-              const c = el_("div", "at-col"); c.dataset.y = y;
-              c.append(el_("div", "b"), el_("div", "y", String(y)));
-              colsEl.appendChild(c);
-            }
+            for (let y = YMIN; y <= YMAX; y++) { const c = el_("div", "at-col"); c.dataset.y = y; c.append(el_("div", "b"), el_("div", "y", String(y))); colsEl.appendChild(c); }
             const pick = (e) => { const r = colsEl.getBoundingClientRect(); const f = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width)); setY(YMIN + Math.floor(f * (YMAX - YMIN + 1))); };
             colsEl.addEventListener("pointerdown", (e) => { stopPlay(); colsEl.setPointerCapture(e.pointerId); pick(e); });
             colsEl.addEventListener("pointermove", (e) => {
@@ -2258,56 +2285,74 @@ def _(anywidget, asyncio, traitlets):
             });
             colsEl.addEventListener("pointerleave", () => { tip.style.display = "none"; });
             colsEl.addEventListener("pointerup", (e) => { try { colsEl.releasePointerCapture(e.pointerId); } catch (err) {} });
-            colsEl.addEventListener("keydown", (e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); e.stopPropagation(); stopPlay(); setY(st.Y + (e.key === "ArrowRight" ? 1 : -1)); } });
             yrEl = el_("div", "at-yr");
-            g.append(playBtn, colsEl, yrEl);
-            const foot = el_("div", "at-foot");
-            witnessSeg = el_("div", "seg-s");
-            const wb = [["wsf", "Dated by WSF"], ["aef", "by AlphaEarth"]].map(([k, label]) => { const b = el_("button", "", label); b.title = k === "wsf" ? "the year the WSF tracker first read the ground as built-up" : "the first year the ground's AlphaEarth fingerprint jumped (reads nine years for the area, the first time takes a moment)"; b.onclick = () => setWitness(k); witnessSeg.appendChild(b); return b; });
-            witnessSeg.sty = () => wb.forEach((b, i) => b.classList.toggle("on", ["wsf", "aef"][i] === st.witness));
-            witnessSeg.sty();
-            keysEl = el_("div", "at-keys");
-            foot.append(witnessSeg, keysEl);
-            dock.append(g, foot);
+            const mid = el_("div", "at-mid");
+            sliderEl = el_("input", "at-slider"); sliderEl.type = "range"; sliderEl.min = YMIN; sliderEl.max = YMAX; sliderEl.step = 1; sliderEl.value = st.Y;
+            sliderEl.setAttribute("aria-label", "timeline year");
+            sliderEl.addEventListener("input", () => { stopPlay(); setY(Number(sliderEl.value)); if (Number(sliderEl.value) !== st.Y) sliderEl.value = st.Y; });
+            mid.append(colsEl, sliderEl);
+            g.append(playBtn, mid, yrEl);
+            footEl = el_("div", "at-foot");
+            dock.append(g, footEl);
           }
+          const tipText = (y) => {
+            const c = counts, v = c.years[y] || 0;
+            if (c.kind === "hex") return y < 2018 ? "AlphaEarth starts in 2017: the first change it can date is 2018" : `${fmt(v)} hexagon${v === 1 ? "" : "s"} changed between the ${y - 1} and ${y} AlphaEarth pictures`;
+            if (c.kind === "bld") return st.bfill === "ayear" ? `${y}: ${fmt(v)} building${v === 1 ? "" : "s"} whose ground changed that year (AlphaEarth)` : `${fmt(v)} building${v === 1 ? "" : "s"} first seen built ${wsfYearWindow(y)}`;
+            return `${(100 * v / Math.max(1, c.total)).toFixed(1)}% of the built-up ground first seen ${wsfYearWindow(y)}`;
+          };
           function showTip(col, y) {
-            const c = counts;
-            const v = c.years[y] || 0;
-            const who = st.witness === "aef" && c.kind === "bld" ? "AlphaEarth first saw change" : "first seen built";
-            tip.textContent = c.kind === "bld" ? `${y}: ${fmt(v)} building${v === 1 ? "" : "s"} ${who}` : `${y}: ${(100 * v / Math.max(1, c.total)).toFixed(1)}% of the built-up ground here`;
+            tip.textContent = tipText(y);
             const r = col.getBoundingClientRect(), p = pane.getBoundingClientRect();
-            tip.style.left = (r.left + r.width / 2 - p.left) + "px"; tip.style.top = (r.top - p.top - 6) + "px"; tip.style.display = "block";
+            tip.style.left = Math.min(p.width - 170, Math.max(170, r.left + r.width / 2 - p.left)) + "px"; tip.style.top = (r.top - p.top - 6) + "px"; tip.style.display = "block";
           }
-          function renderGrowth() {
-            if (dockLens !== "growth") { buildGrowth(); dockLens = "growth"; }
+          function renderTimeline() {
+            const kind = "tl";
+            if (dockKind !== kind) { buildTimeline(); dockKind = kind; }
             const c = counts;
             let max = 1;
             if (c) for (let y = YMIN; y <= YMAX; y++) max = Math.max(max, c.years[y] || 0);
             colsEl.querySelectorAll(".at-col").forEach((col) => {
-              const y = Number(col.dataset.y);
-              const v = c ? (c.years[y] || 0) : 0;
-              col.querySelector(".b").style.height = c ? (v ? Math.max(3, 52 * v / max) : 2) + "px" : "2px";
+              const y = Number(col.dataset.y), v = c ? (c.years[y] || 0) : 0;
+              const bEl = col.querySelector(".b");
+              bEl.style.height = c ? (v ? Math.max(3, 52 * v / max) : 2) + "px" : "2px";
+              bEl.style.background = c && c.kind === "hex" && y >= 2018 ? `rgba(${virYear(y).join(",")},${y <= st.Y ? 1 : 0.25})` : "";
               col.classList.toggle("cur", y === st.Y);
               col.classList.toggle("past", y < st.Y);
+              col.classList.toggle("off", y < minY());
             });
             colsEl.setAttribute("aria-valuenow", String(st.Y));
+            if (sliderEl && Number(sliderEl.value) !== st.Y) sliderEl.value = st.Y;
             const v = c ? (c.years[st.Y] || 0) : null;
-            let line;
-            if (!c) line = map && map.getZoom() < 7 ? "Zoom in to see the ground" : "Reading the ground…";
+            let head = "", sub = "";
+            if (tlKind() === "hex") {
+              head = st.Y < 2018 ? "AlphaEarth starts in 2017" : `between the ${st.Y - 1} and ${st.Y} pictures`;
+              sub = !c ? (map && map.getZoom() < HEXZ ? `Zoom in to zoom ${HEXZ} or closer` : "Reading AlphaEarth…") : `${fmt(v)} of ${fmt(c.total + c.quiet)} hexagons changed clearly`;
+            } else if (!c) { head = wsfYearWindow(st.Y); sub = tlKind() === "wait" ? `Buildings from zoom ${BLDZ}: zoom in, or turn on WSF` : "Reading…"; }
             else if (c.kind === "bld") {
-              const w = st.witness === "aef" ? "changed (AlphaEarth)" : "first seen built";
-              line = `${fmt(v)} building${v === 1 ? "" : "s"} ${w} in ${st.Y}`;
-              if (st.witness === "aef" && !meta.aef) line = "Reading AlphaEarth for this area\u2026";
-              else if (st.witness === "aef" && st.Y < 2018) line = "AlphaEarth starts in 2017, so the first change it can date is 2018";
-            } else line = `${(100 * v / Math.max(1, c.total)).toFixed(1)}% of the built-up ground here first appeared in ${st.Y}`;
-            const img = s2For(st.Y);
-            yrEl.innerHTML = `<b>${st.Y}</b><span>${line}<br>imagery ${img}${img !== st.Y ? (st.Y < img ? " (earliest)" : "") : ""}</span>`;
-            const k = (c2, a, lab, outline) => `<span class="at-key"><i style="background:${outline ? "none" : rgba(c2, a)};${outline ? `border:1.5px solid ${rgba(c2, a)}` : ""}"></i>${lab}</span>`;
-            keysEl.innerHTML = k(GLOW, 1, `new in ${st.Y}`) + k(AMBER, .55, "earlier") + k(WHITE, .7, st.witness === "aef" ? "no clear change" : "standing by 2016", true)
-              + (bldUp() ? "" : `<span class="at-key" style="opacity:.8">buildings from zoom ${BLDZ}</span>`);
+              if (st.bfill === "ayear") { head = st.Y < 2018 ? "AlphaEarth starts in 2017" : `between the ${st.Y - 1} and ${st.Y} AlphaEarth pictures`; sub = meta.aef ? `${fmt(v)} buildings whose ground changed` : "Reading AlphaEarth for this area…"; }
+              else { head = wsfYearWindow(st.Y); sub = `${fmt(v)} building${v === 1 ? "" : "s"} first seen built`; }
+            } else { head = wsfYearWindow(st.Y); sub = `${(100 * v / Math.max(1, c.total)).toFixed(1)}% of the built-up ground here first seen`; }
+            yrEl.innerHTML = `<b>${st.Y}</b><span>${head}<br>${sub}</span>`;
+            const key = (col, a, lab, outline) => `<span class="at-key"><i style="background:${outline ? "none" : rgba(col, a)};${outline ? `border:1.5px solid ${rgba(col, a)}` : ""}"></i>${lab}</span>`;
+            if (tlKind() === "hex") {
+              footEl.innerHTML = "";
+              const keys = el_("div", "at-keys");
+              keys.innerHTML = st.gmode === "when"
+                ? `<span class="at-key">2018 <i class="at-ramp" style="width:140px;background:linear-gradient(90deg,${virCss(8)})"></i> 2025</span>` + key(QUIET, .8, `no clear change${st.Y < 2025 ? `, or after ${st.Y}` : ""}`)
+                : `<span class="at-key">moved little <i class="at-ramp" style="width:140px;background:linear-gradient(90deg,${virCss(8)})"></i> a lot, ${hmeta.y0 || 2017} to ${hmeta.y1 || 2025}</span>`;
+              footEl.append(keys);
+            } else {
+              footEl.innerHTML = "";
+              const keys = el_("div", "at-keys");
+              const aef = st.bfill === "ayear" && tlKind() === "bld";
+              keys.innerHTML = key(DEEP, .9, `${aef ? "changed" : "built"} in ${st.Y}`) + key(AMBER, .5, "earlier") + key(GREY, .8, aef ? "no clear change" : "standing by 2016", true)
+                + (st.on.bld && !bldUp() ? `<span class="at-key">buildings from zoom ${BLDZ}</span>` : "");
+              footEl.append(keys);
+            }
           }
           function renderCheck() {
-            dockLens = "check";
+            dockKind = "check";
             const gp = meta.gap_share, c = counts;
             if (!bldUp() || !c || c.kind !== "bld") { dock.innerHTML = `<div class="at-sum"><h4>Where the map and WSF disagree</h4><div class="line"><i style="background:${rgba(COOL, .9)}"></i><span>Zoom in to zoom ${BLDZ} or closer to compare the buildings on the map with WSF's built-up ground.</span></div></div>`; return; }
             dock.innerHTML = `<div class="at-sum"><h4>Where the map and WSF disagree, in this area</h4>
@@ -2315,85 +2360,109 @@ def _(anywidget, asyncio, traitlets):
               <div class="line"><i style="background:${rgba(AMBER, .9)}"></i><span>${gp != null ? `<b>${(100 * gp).toFixed(0)}%</b> of WSF's built-up ground is 20 m or more from any building on the map.` : "Built-up ground 20 m or more from any building on the map."} Structures the map may be missing.</span></div></div>`;
           }
           function renderSources() {
-            dockLens = "sources";
+            dockKind = "sources";
             const c = counts;
             if (!bldUp() || !c || c.kind !== "bld") { dock.innerHTML = `<div class="at-sum"><h4>Where the buildings come from</h4><div class="line"><i style="background:${rgba(SRC[0], .9)}"></i><span>Zoom in to zoom ${BLDZ} or closer to see the buildings on the map.</span></div></div>`; return; }
             const names = meta.sources || [];
             const order = Object.keys(c.src).map(Number).sort((a, b) => a - b);
-            const colOf = (s) => (s < SRC.length ? SRC[s] : OTHER);
             let other = 0;
             const rows = [];
-            for (const s of order) { if (s < SRC.length) rows.push([names[s] || "unnamed", c.src[s], colOf(s)]); else other += c.src[s]; }
+            for (const s of order) { if (s < SRC.length) rows.push([names[s] || "unnamed", c.src[s], SRC[s]]); else other += c.src[s]; }
             if (other) rows.push(["other sources", other, OTHER]);
-            const stack = rows.map(([, v, col]) => `<span style="flex:${v};background:${rgba(col, 1)}" title=""></span>`).join("");
+            const stack = rows.map(([, v, col]) => `<span style="flex:${v};background:${rgba(col, 1)}"></span>`).join("");
             const lines = rows.map(([nm, v, col]) => `<div class="line"><i style="background:${rgba(col, 1)}"></i><span><b>${nm}</b> ${fmt(v)} (${(100 * v / c.total).toFixed(1)}%)</span></div>`).join("");
             dock.innerHTML = `<div class="at-sum"><h4>Where the ${fmt(c.total)} buildings on the map come from</h4><div class="at-stack">${stack}</div>${lines}</div>`;
           }
           function renderDock() {
-            if (st.lens === "growth") renderGrowth();
-            else if (st.lens === "check") renderCheck();
-            else renderSources();
+            const bldFill = st.on.bld && (st.bfill === "check" || st.bfill === "source");
+            if (bldFill && (bldUp() || !(st.on.hex || st.on.wsf))) { if (st.bfill === "check") renderCheck(); else renderSources(); }
+            else if (tlKind()) renderTimeline();
+            else { dockKind = null; dock.innerHTML = `<div class="at-sum"><h4>Nothing on to count</h4><div class="line"><i style="background:${rgba(AMBER, .8)}"></i><span>Turn on Buildings, WSF or AlphaEarth under Layers (B, W, A).</span></div></div>`; }
           }
 
-          // ---- state changes ----------------------------------------------------
-          function setLens(k) {
-            if (k !== "growth") stopPlay();
-            st.lens = k;
-            LENSES.forEach(([kk], i) => lensBtns[i].classList.toggle("on", kk === k));
-            recolor(); recount(); update();
+          // ---- state changes ---------------------------------------------------------------
+          function toggleLayer(k) {
+            st.on[k] = !st.on[k];
+            if (k === "img" && !st.on.img) stopFlip(true);
+            send(k === "hex" ? "hex" : "layers");
+            if (st.Y < minY()) st.Y = YMAX;
+            styleRows(); recolor(); recolorHex(); recount(); update();
           }
-          let lastS2 = s2For(st.Y);
+          function setBfill(k) {
+            st.bfill = k;
+            if (!st.on.bld) { st.on.bld = true; send("layers"); }
+            if (k === "ayear" && !meta.aef) send("witness");
+            if (st.Y < minY()) st.Y = YMAX;
+            styleRows(); recolor(); recount(); update();
+          }
           function setY(y) {
-            y = Math.max(YMIN, Math.min(YMAX, y));
+            y = Math.max(minY(), Math.min(YMAX, y));
             if (y === st.Y) return;
             st.Y = y;
-            const s = s2For(y);
-            if (s !== lastS2) { lastS2 = s; send("s2"); }
-            recolor(); renderDock(); update();
-          }
-          function setWitness(k) {
-            st.witness = k;
-            if (witnessSeg) witnessSeg.sty();
-            if (k === "aef" && !meta.aef) send("witness");
-            recolor(); recount(); update();
+            recolor(); recolorHex(); renderDock(); update();
           }
           let playT = null;
           function stopPlay() { st.playing = false; clearTimeout(playT); if (playBtn) { playBtn.innerHTML = ICON.play; playBtn.title = "play the years (space)"; } }
           function togglePlay() {
             if (st.playing) { stopPlay(); return; }
-            if (st.lens !== "growth") setLens("growth");
+            if (!tlKind()) return;
             st.playing = true;
             playBtn.innerHTML = ICON.pause; playBtn.title = "pause (space)";
-            if (st.Y >= YMAX) setY(YMIN);
-            const step = () => {
-              if (!st.playing) return;
-              if (st.Y >= YMAX) { stopPlay(); return; }
-              setY(st.Y + 1);
-              playT = setTimeout(step, 900);
-            };
+            if (st.Y >= YMAX) setY(minY());
+            const step = () => { if (!st.playing) return; if (st.Y >= YMAX) { stopPlay(); return; } setY(st.Y + 1); playT = setTimeout(step, 900); };
             playT = setTimeout(step, 700);
           }
 
-          // ---- the layers -------------------------------------------------------
-          let map = null, ov = null, mapS = null, ovS = null, syncing = false;
-          let hexes = [], N = 0, hcolors = null, res = -1, hexIndex = new Map(), hexData = null, hover = null;
-          let gapImg = null, gapSeq = 0;
-          let swipeF = 0.5, s2Shown = [];
+          // ---- the before and after: automatic, from the clicked thing's year ----------------
+          // the imagery covers 2022 to 2025; a change dated inside it gets the
+          // year before and the year after, flipped; anything earlier has no
+          // "before" picture and says so
+          function flipPair(y) {
+            if (!y || y < S2Y[0] + 1 || y > S2Y[S2Y.length - 1]) return null;
+            return [y - 1, Math.min(y + 1, S2Y[S2Y.length - 1])];
+          }
+          let flipT = null;
+          function startFlip(pair, why) {
+            stopFlip(true);
+            st.flip = {a: pair[0], b: pair[1], cur: pair[0], why, wasImagery: st.on.img, paused: false};
+            if (!st.on.img) { st.on.img = true; styleRows(); recolor(); }
+            st.imgYear = pair[0];
+            const tick = () => {
+              const f = st.flip; if (!f) return;
+              if (!f.paused) { f.cur = f.cur === f.a ? f.b : f.a; st.imgYear = f.cur; styleFlip(); styleImgRow(); update(); }
+              flipT = setTimeout(tick, 1100);
+            };
+            styleFlip(); update();
+            flipT = setTimeout(tick, 1400);
+          }
+          function stopFlip(keep) {
+            clearTimeout(flipT); flipT = null;
+            const f = st.flip; st.flip = null;
+            if (f && !keep && !f.wasImagery) { st.on.img = false; recolor(); }
+            if (f) st.imgYear = S2Y[S2Y.length - 1];
+            imgTag.style.display = "none";
+            styleRows(); update();
+          }
+          function styleFlip() {
+            const f = st.flip;
+            if (!f) { imgTag.style.display = "none"; return; }
+            imgTag.style.display = "block";
+            imgTag.textContent = f.cur === f.a ? `Imagery ${f.a}, before` : `Imagery ${f.b}, after`;
+            card.querySelectorAll("[data-flip]").forEach((b) => b.classList.toggle("on", Number(b.dataset.flip) === f.cur));
+            const pb = card.querySelector("[data-act=pause]");
+            if (pb) pb.textContent = f.paused ? "Flip" : "Hold";
+          }
+
+          // ---- the layers --------------------------------------------------------------------
+          let map = null, ov = null;
+          let gapImg = null, gapSeq = 0, s2Shown = [];
           const slot = () => { const want = cfg.labels_slot || "watername_ocean"; const s = map && map.getStyle && map.getStyle(); if (!s || !s.layers || s.layers.some((x) => x.id === want)) return want; const l = s.layers.find((x) => x.type === "symbol"); return (l && l.id) || want; };
-          const paired = () => st.compare && st.cmpStyle === "pair";
-          const swiping = () => st.compare && st.cmpStyle === "swipe";
-          const swipeLon = () => { if (!map) return null; return map.unproject([swipeF * mapEl.clientWidth, mapEl.clientHeight / 2]).lng; };
-          const clipTo = (side) => {
-            if (!swiping()) return {};
-            const x = swipeLon(); if (x == null) return {};
-            return {extensions: [new ClipExtension()], clipBounds: side === "left" ? [x - 360, -85, x, 85] : [x, -85, x + 360, 85]};
-          };
-          const s2Layer = (year, clip, id) => new TileLayer({
-            ...(clip || {}),
-            id: (id || "s2") + "-" + year + "-g" + (cfg.s2_gen || 0),
+          const s2Layer = (year) => new TileLayer({
+            id: "s2-" + year + "-g" + (cfg.s2_gen || 0),
             getTileData: async ({index, signal}) => { const u8 = await ask("s2", year, index, signal); return u8 ? pngBitmap(u8) : null; },
             onTileError: (e) => { if (!e || e.name !== "AbortError") say("s2 tile: " + ((e && e.message) || e)); },
             tileSize: cfg.tile || 256, minZoom: cfg.s2_min_z || 7, maxZoom: 14, refinementStrategy: "best-available", beforeId: slot(),
+            visible: year === st.imgYear,
             renderSubLayers: (p) => { if (!p.data) return null; const {west, south, east, north} = p.tile.bbox; return new BitmapLayer(p, {data: null, image: p.data, bounds: [west, south, east, north]}); },
           });
           const growthLayer = () => new TileLayer({
@@ -2401,142 +2470,135 @@ def _(anywidget, asyncio, traitlets):
             getTileData: ({index, signal, bbox}) => rawTile({index, signal, bbox}),
             onTileError: (e) => { if (!e || e.name !== "AbortError") say("wsf tile: " + ((e && e.message) || e)); },
             tileSize: cfg.tile || 256, minZoom: 0, maxZoom: 14, extent: cfg.extent || null, refinementStrategy: "best-available",
-            visible: st.lens === "growth" && !(bldUp()), beforeId: slot(),
+            // over the imagery, never: two colour pictures on top of each other read as neither
+            visible: !!st.on.wsf, beforeId: slot(),
             updateTriggers: {renderSubLayers: [st.Y]},
             renderSubLayers: (p) => { if (!p.data) return null; const {west, south, east, north} = p.tile.bbox; return new BitmapLayer(p, {id: p.id + "-" + st.Y, data: null, image: paintRaw(p.data, st.Y), bounds: [west, south, east, north]}); },
           });
           const ring = (h) => { try { return cellToBoundary(h, true); } catch (e) { return null; } };
           const outline = (id, h, color, width) => { const r = h ? ring(h) : null; return r ? new PathLayer({id, data: [r], getPath: (d) => d, getColor: color, widthUnits: "pixels", getWidth: width, beforeId: slot()}) : null; };
-          const fpLayer = (id) => new GeoArrowPolygonLayer({
-            id: id + "-" + polysSeq, data: polys, filled: true, stroked: true,
-            getFillColor: fillVec, getLineColor: lineVec,
-            updateTriggers: {getFillColor: [colSeq], getLineColor: [colSeq]},
-            lineWidthUnits: "pixels", getLineWidth: 1.1, lineWidthMinPixels: 0.8, pickable: false, beforeId: slot(),
-          });
           function layers() {
             const out = [];
-            swipe.style.display = swiping() ? "block" : "none";
-            const B = st.compare ? st.cmpB : s2For(st.Y);
-            // the year shown before stays underneath until the new year's
-            // tiles land, so a year change never flashes to black
-            if (B !== s2Shown[s2Shown.length - 1]) { s2Shown = s2Shown.filter((y) => y !== B).concat([B]).slice(-2); }
-            if (swiping()) { out.push(s2Layer(st.cmpA, clipTo("left"), "s2a")); out.push(s2Layer(B, clipTo("right"), "s2b")); }
-            else for (const y of s2Shown) out.push(s2Layer(y, null, "s2b"));
+            if (st.on.img) {
+              // every imagery year asked for stays mounted (hidden when not
+              // shown), so a flip is instant once both years have loaded
+              if (!s2Shown.includes(st.imgYear)) s2Shown = s2Shown.concat([st.imgYear]).slice(-4);
+              for (const y of s2Shown) out.push(s2Layer(y));
+            }
             out.push(growthLayer());
-            if (st.hex && hexData && map && map.getZoom() >= HEXZ) out.push(new H3HexagonLayer({
-              id: "hexes", data: hexData, getHexagon: (_, {index}) => hexes[index],
-              getFillColor: (_, {index}) => [hcolors[4 * index], hcolors[4 * index + 1], hcolors[4 * index + 2], hcolors[4 * index + 3]],
-              updateTriggers: {getFillColor: [hexData], getHexagon: [hexData]},
+            if (st.on.hex && hcol && map && map.getZoom() >= HEXZ) out.push(new H3HexagonLayer({
+              id: "hexes", data: {length: N}, getHexagon: (_, {index}) => hexes[index],
+              getFillColor: (_, {index}) => [hcol[4 * index], hcol[4 * index + 1], hcol[4 * index + 2], hcol[4 * index + 3]],
+              updateTriggers: {getFillColor: [hexSeq], getHexagon: [hexSeq]},
               filled: true, stroked: false, extruded: false, highPrecision: true, pickable: false, beforeId: slot(),
+              // faint over the imagery, fainter while a before and after flips: the picture is the point then
+              opacity: st.flip ? 0.2 : (st.on.img ? 0.55 : 1),
             }));
-            if (st.lens === "check" && gapImg && meta.box && bldUp()) out.push(new BitmapLayer({id: "gap-" + gapSeq, image: gapImg, bounds: meta.box, beforeId: slot()}));
-            if (bldUp() && fillVec) out.push(fpLayer("fp"));
-            if (st.hex) { const h = outline("hover", hover, [255, 255, 255, 255], 2); if (h) out.push(h); }
+            if (st.on.bld && st.bfill === "check" && gapImg && meta.box && bldUp()) out.push(new BitmapLayer({id: "gap-" + gapSeq, image: gapImg, bounds: meta.box, opacity: st.on.img ? 0.7 : 1, beforeId: slot()}));
+            if (st.on.bld && bldUp() && fillVec) out.push(new GeoArrowPolygonLayer({
+              id: "fp-" + polysSeq, data: polys, filled: true, stroked: true,
+              getFillColor: fillVec, getLineColor: lineVec,
+              updateTriggers: {getFillColor: [colSeq], getLineColor: [colSeq]},
+              lineWidthUnits: "pixels", getLineWidth: st.on.img ? 1.3 : 1, lineWidthMinPixels: 0.8, pickable: false, beforeId: slot(),
+            }));
+            if (st.on.hex) { const h = outline("hover", hover, [24, 32, 40, 200], 1.5); if (h) out.push(h); }
             if (cfg.hit) { const p = outline("picked", cfg.hit, [...COOL, 255], 3); if (p) out.push(p); }
             return out;
           }
-          function update() {
-            if (ov) ov.setProps({layers: layers()});
-            if (ovS) {
-              const o = [];
-              if (paired()) { o.push(s2Layer(st.cmpA, null, "s2l")); if (bldUp() && fillVec) o.push(fpLayer("fpl")); }
-              ovS.setProps({layers: o});
-            }
-            tagA.textContent = String(st.cmpA); tagB.textContent = String(st.cmpB);
-            bCompare.classList.toggle("on", st.compare);
-            bCompare.querySelector("span").textContent = st.compare ? `${st.cmpA} | ${st.cmpB}` : "Compare";
-          }
-          const cycle = (y, other, dir) => { const i = S2Y.indexOf(y); let j = (i + dir + S2Y.length) % S2Y.length; if (S2Y[j] === other) j = (j + dir + S2Y.length) % S2Y.length; return S2Y[j]; };
-          tagA.onclick = (e) => { e.stopPropagation(); st.cmpA = cycle(st.cmpA, st.cmpB, 1); update(); };
-          tagB.onclick = (e) => { e.stopPropagation(); st.cmpB = cycle(st.cmpB, st.cmpA, -1); update(); };
-          const placeSwipe = () => { swipe.style.left = (swipeF * 100) + "%"; };
-          placeSwipe();
-          swipe.addEventListener("pointerdown", (e) => { if (e.target.closest(".at-tag")) return; swipe.setPointerCapture(e.pointerId); e.preventDefault(); });
-          swipe.addEventListener("pointermove", (e) => { if (!swipe.hasPointerCapture(e.pointerId)) return; const r = pane.getBoundingClientRect(); swipeF = Math.max(0.03, Math.min(0.97, (e.clientX - r.left) / r.width)); placeSwipe(); update(); });
-          swipe.addEventListener("pointerup", (e) => { try { swipe.releasePointerCapture(e.pointerId); } catch (err) {} });
+          function update() { if (ov) ov.setProps({layers: layers()}); }
           function labels(on) {
-            for (const m of [map, mapS]) {
-              if (!m || !m.isStyleLoaded()) continue;
-              (m.getStyle().layers || []).forEach((l) => { if (l.layout && l.layout["text-field"] !== undefined) m.setLayoutProperty(l.id, "visibility", on ? "visible" : "none"); });
-            }
+            if (!map || !map.isStyleLoaded()) return;
+            (map.getStyle().layers || []).forEach((l) => { if (l.layout && l.layout["text-field"] !== undefined) map.setLayoutProperty(l.id, "visibility", on ? "visible" : "none"); });
           }
           const hideBuildings = (m) => (m.getStyle().layers || []).forEach((l) => { if (l["source-layer"] === "building" || /^building/.test(l.id)) m.setLayoutProperty(l.id, "visibility", "none"); });
-          const follow = (a, b) => { if (syncing || !a || !b) return; syncing = true; try { b.jumpTo({center: a.getCenter(), zoom: a.getZoom(), bearing: a.getBearing(), pitch: a.getPitch()}); } finally { syncing = false; } };
-          function ensureLeft() {
-            if (mapS || !map) return;
-            mapS = new maplibregl.Map({container: mapElS, style: STYLE, center: map.getCenter(), zoom: map.getZoom(), attributionControl: false});
-            mapS.keyboard.disable();
-            ovS = new MapboxOverlay({interleaved: true, layers: []});
-            mapS.addControl(ovS);
-            mapS.on("load", () => { hideBuildings(mapS); labels(st.labels); update(); });
-            mapS.on("move", () => { if (paired()) follow(mapS, map); });
-            mapS.on("click", (e) => clickAt(e.lngLat, map.project(e.lngLat)));
-            map.on("move", () => { if (paired()) follow(map, mapS); });
-            new ResizeObserver(() => { try { mapS.resize(); } catch (e) {} }).observe(mapElS);
-          }
-          function applyLayout() {
-            const p = paired();
-            mapEl.style.left = p ? "50%" : "0";
-            mapElS.style.display = p ? "block" : "none";
-            if (p) ensureLeft();
-            segOnCss();
-            setTimeout(() => { try { map && map.resize(); if (mapS && p) { mapS.resize(); follow(map, mapS); } } catch (e) {} update(); sendView(); }, 30);
-          }
 
-          // ---- the card ---------------------------------------------------------
+          // ---- the card ----------------------------------------------------------------------
+          // a small chart of AlphaEarth's year-to-year steps against the quiet
+          // level: what "the ground changed in 2021" is made of
+          function spark(steps, years, D0) {
+            if (!steps || !steps.length || D0 == null) return "";
+            const W = 280, H = 64, pad = 16, n = steps.length, bw = (W - 8) / n;
+            const vmax = Math.max(D0 * 1.6, ...steps.filter((v) => v != null));
+            const yOf = (v) => H - pad - (H - pad - 4) * Math.min(1, v / vmax);
+            let s = `<svg class="at-spark" width="${W}" height="${H}" role="img" aria-label="AlphaEarth year-to-year change">`;
+            steps.forEach((v, i) => {
+              if (v == null) return;
+              const x = 4 + i * bw, y = yOf(v), up = v > D0;
+              s += `<rect x="${x + 2}" y="${y}" width="${bw - 4}" height="${H - pad - y}" rx="2" fill="${up ? rgba(DEEP, .9) : "rgba(24,32,40,.22)"}"><title>${years[i] - 1} to ${years[i]}: ${v.toFixed(3)}${up ? " (above the quiet level)" : ""}</title></rect>`;
+              s += `<text x="${x + bw / 2}" y="${H - 3}" text-anchor="middle">’${String(years[i]).slice(-2)}</text>`;
+            });
+            const qy = yOf(D0);
+            s += `<line x1="2" x2="${W - 2}" y1="${qy}" y2="${qy}" stroke="rgba(24,32,40,.55)" stroke-dasharray="3 3"/><text x="${W - 4}" y="${qy - 3}" text-anchor="end">quiet level</text></svg>`;
+            return s;
+          }
           function renderCard() {
             let c = null;
             try { c = JSON.parse(model.get("card") || "null"); } catch (e) { c = null; }
-            if (!c || !c.kind) { card.style.display = "none"; if (st.picked !== -1) { st.picked = -1; recolor(); update(); } return; }
-            const place = (c.place || []).join(" · ") + (c.place_pending ? "" : "");
+            if (!c || !c.kind) { card.style.display = "none"; if (st.flip) stopFlip(); if (st.picked !== -1) { st.picked = -1; recolor(); update(); } return; }
             const row = (col, html) => `<div class="row"><i style="background:${col}"></i><div>${html}</div></div>`;
             let h = `<button class="x" title="close (Esc)">×</button>`;
-            if (place) h += `<div class="place">${place}</div>`;
-            const yrs = [];
+            if (c.place && c.place.length) h += `<div class="place">${c.place.join(", ")}</div>`;
+            let changeY = null, changeWhy = "";
             if (c.kind === "footprint") {
               h += `<h3>${c.what ? c.what[0].toUpperCase() + c.what.slice(1) : "A building on the map"}</h3>`;
-              const w = c.wcode;
-              if (w === 1) h += row(rgba(WHITE, .8), `Standing when the WSF record opens, July 2016.`);
-              else if (w >= 16) { h += row(rgba(GLOW, 1), `WSF first saw it built in <b>${2000 + w}</b>.`); yrs.push(2000 + w); }
+              const k = c.wk || 0;
+              if (k === 1) h += row(rgba(GREY, .9), `WSF: already standing when its record opens, July 2016.`);
+              else if (k >= 2) { h += row(rgba(DEEP, 1), `WSF first saw it built <b>${wsfWindow(k)}</b>.`); changeY = wsfYear(k); changeWhy = "WSF"; }
               else h += row(rgba(COOL, 1), `WSF has <b>never</b> read it as built-up. It may be new, small, or not there.`);
-              if (c.npx) h += `<div class="muted" style="margin:-4px 0 8px 26px;font-size:12.5px">${c.nbuilt} of its ${c.npx} WSF pixels are built-up</div>`;
+              if (c.npx) h += `<div class="sub">${c.nbuilt} of the ${c.npx} WSF pixels under it are built-up</div>`;
               const a = c.acode;
-              if (a === 0) h += row(rgba(WHITE, .35), `AlphaEarth not read for this area yet. <button class="at-chip" data-act="aef" style="margin-top:6px;display:block">Check with AlphaEarth</button>`);
-              else if (a === 1) h += row(rgba(WHITE, .8), `AlphaEarth: no clear change to the ground 2017 to 2025.`);
-              else if (a === 2) h += row(rgba(WHITE, .35), `AlphaEarth: no data here.`);
-              else { h += row(rgba(AMBER, 1), `AlphaEarth: the ground changed in <b>${2000 + a}</b>.`); yrs.push(2000 + a); }
-              if (w >= 16 && a >= 16) { const d = Math.abs(w - a); h += `<div class="muted" style="margin:-2px 0 8px 26px;font-size:12.5px">${d <= 1 ? "The two agree." : `The two differ by ${d} years.`}</div>`; }
-              const bits = [c.dataset ? `From <b>${c.dataset}</b>` : "From an unnamed source", c.updated ? `last edited ${c.updated}` : null].filter(Boolean).join(", ");
+              if (a === 0) h += row("rgba(24,32,40,.25)", `AlphaEarth not read for this area yet. <button class="at-chip" data-act="aef" style="margin-top:6px;display:block">Check with AlphaEarth</button>`);
+              else if (a === 1) h += row(rgba(GREY, .9), `AlphaEarth: no year-to-year jump above the quiet level, 2017 to 2025. The ground under it looks the same throughout.`);
+              else if (a === 2) h += row("rgba(24,32,40,.25)", `AlphaEarth: no data here.`);
+              else { h += row(rgba(AMBER, 1), `AlphaEarth: the ground first changed clearly between its <b>${2000 + a - 1} and ${2000 + a}</b> pictures.`); if (!changeY) { changeY = 2000 + a; changeWhy = "AlphaEarth"; } }
+              if (c.asteps) h += spark(c.asteps, c.ayears, c.aD0);
+              if (k >= 2 && a >= 16) { const d = Math.abs(wsfYear(k) - (2000 + a)); h += `<div class="sub">${d <= 1 ? "WSF and AlphaEarth agree on the year." : `WSF and AlphaEarth differ by ${d} years.`}</div>`; }
+              const bits = [c.dataset ? `On the map from <b>${c.dataset}</b>` : "On the map from an unnamed source", c.updated ? `last edited ${c.updated}` : null].filter(Boolean).join(", ");
               const dims = [c.height != null ? `${Math.round(c.height)} m tall` : null, c.floors != null ? `${c.floors} floors` : null].filter(Boolean).join(", ");
-              h += row(rgba(SRC[Math.min(c.src || 0, SRC.length - 1)], 1), bits + "." + (dims ? ` ${dims[0].toUpperCase() + dims.slice(1)}.` : ""));
+              h += row(rgba(SRC[Math.min(c.src ?? 99, SRC.length)] || OTHER, 1), bits + "." + (dims ? ` ${dims[0].toUpperCase() + dims.slice(1)}.` : ""));
             } else if (c.kind === "ground") {
               h += `<h3>No building on the map here</h3>`;
-              if (c.wpixel >= 16 || c.wpixel === 1) {
-                const y = c.wpixel === 1 ? null : 2000 + c.wpixel;
-                const when = y ? `from <b>${y}</b>` : "already in 2016";
+              const k = c.wk || 0;
+              if (k >= 1) {
                 const why = c.near ? "It is within 20 m of a building on the map, so likely a yard, a lane or that building's edge." : "No building on the map within 20 m: something may be here that the map doesn't have.";
-                h += row(rgba(AMBER, c.near ? .5 : 1), `WSF read this ground as built-up ${when}. ${why}`);
-                if (y) yrs.push(y);
-              }
-              else h += row(rgba(WHITE, .5), `WSF has never read this ground as built-up either.`);
-            } else if (c.kind === "note") {
-              h += `<h3>${c.title || ""}</h3>`;
+                h += row(rgba(AMBER, c.near ? .5 : 1), `WSF read this ground as built-up <b>${wsfWindow(k)}</b>. ${why}`);
+                if (k >= 2) { changeY = wsfYear(k); changeWhy = "WSF"; }
+              } else h += row("rgba(24,32,40,.25)", `WSF has never read this ground as built-up either.`);
+            } else if (c.kind === "hex") {
+              h += `<h3>This hexagon of ground</h3>`;
+              const lvl = c.level == null ? null : (c.level >= 0.75 ? "a lot" : c.level >= 0.4 ? "a fair amount" : c.level >= 0.15 ? "a little" : "barely");
+              if (c.when >= 2018) { h += row(rgba(DEEP, 1), `AlphaEarth: the ground first changed clearly between its <b>${c.when - 1} and ${c.when}</b> pictures${lvl ? `, and ${lvl} over ${c.y0} to ${c.y1}` : ""}.`); changeY = c.when; changeWhy = "AlphaEarth"; }
+              else if (c.when === -1) h += row(rgba(GREY, .9), `AlphaEarth: no year stood out${lvl ? `; it moved ${lvl} over ${c.y0} to ${c.y1}` : ""}. Every year-to-year step is under the quiet level.`);
+              else h += row("rgba(24,32,40,.25)", `AlphaEarth: no data here.`);
+              h += spark(c.steps, c.step_years, c.D0);
+              if (c.p_built > 0) h += row(rgba(AMBER, .7), `WSF: <b>${Math.round(100 * c.p_built)}%</b> of it built-up by ${c.y1}` + (c.p_new > 0 ? `, ${(100 * c.p_new).toFixed(1)}% new since ${c.y0 + 1}${c.byear > 0 ? `, most of that in ${c.byear}` : ""}.` : ", all of it before " + (c.y0 + 1) + "."));
+              else h += row("rgba(24,32,40,.25)", `WSF: no built-up ground in it.`);
+              h += `<div class="sub">${c.km2 ? c.km2.toFixed(3) + " km² hexagon. " : ""}The quiet level is the step size that 95% of the ground WSF says stayed the same stays under, in this view.</div>`;
+            } else if (c.kind === "note") h += `<h3 style="font-size:15px">${c.title || ""}</h3>`;
+            // the before and after
+            const pair = flipPair(changeY);
+            if (changeY) {
+              if (pair) h += `<div class="flip"><div>Imagery, before and after (${changeWhy} ${changeY}):</div><div class="yrs"><button class="at-chip" data-flip="${pair[0]}">${pair[0]} before</button><button class="at-chip" data-flip="${pair[1]}">${pair[1]} after</button><button class="at-chip" data-act="pause">Hold</button></div></div>`;
+              else h += `<div class="flip muted">${changeWhy} dates this to ${changeY}, before the imagery starts in ${S2Y[0]}, so there's no picture from before it to compare.</div>`;
             }
-            if (c.extra && c.extra.length) h += `<div class="extra">${c.extra.join("<br>")}</div>`;
-            const uniq = [...new Set(yrs)].sort();
-            if (uniq.length) h += `<div class="acts">${uniq.map((y) => `<button class="at-chip" data-y="${y}">Show ${y}</button>`).join("")}</div>`;
             card.innerHTML = h;
             card.style.display = "block";
             card.querySelector(".x").onclick = () => closeCard();
-            card.querySelectorAll("[data-y]").forEach((b) => { b.onclick = () => { stopPlay(); if (st.lens !== "growth") setLens("growth"); setY(Number(b.dataset.y)); }; });
             const ab = card.querySelector("[data-act=aef]");
             if (ab) ab.onclick = () => { ab.disabled = true; ab.textContent = "Reading AlphaEarth…"; send("witness"); };
+            card.querySelectorAll("[data-flip]").forEach((b) => { b.onclick = () => { if (!st.flip) return; st.flip.paused = true; st.flip.cur = Number(b.dataset.flip); st.imgYear = st.flip.cur; styleFlip(); update(); }; });
+            const pb = card.querySelector("[data-act=pause]");
+            if (pb) pb.onclick = () => { if (!st.flip) return; st.flip.paused = !st.flip.paused; styleFlip(); };
+            const same = st.flip && pair && st.flip.a === pair[0] && st.flip.b === pair[1] && st.flip.n === c.n;
+            if (pair && !same) { startFlip(pair, changeWhy); st.flip.n = c.n; }
+            else if (!pair && st.flip) stopFlip();
+            else styleFlip();
             const idx = c.kind === "footprint" && c.idx != null ? c.idx : -1;
             if (idx !== st.picked) { st.picked = idx; recolor(); update(); }
           }
-          function closeCard() { model.set("pick", JSON.stringify({close: true, n: ++seq})); model.save_changes(); card.style.display = "none"; st.picked = -1; recolor(); update(); }
+          function closeCard() { model.set("pick", JSON.stringify({close: true, n: ++seq})); model.save_changes(); card.style.display = "none"; if (st.flip) stopFlip(); st.picked = -1; recolor(); update(); }
 
-          // ---- search (Photon, in the browser) ----------------------------------
+          // ---- search ------------------------------------------------------------------------
           const PHOTON = "https://photon.komoot.io/api/";
           let gcHits = [], gcSel = -1, gcTimer = null, gcSeq = 0;
           const hitName = (f) => { const p = f.properties || {}; return [p.name, p.street && !p.name ? p.street : null, p.city && p.city !== p.name ? p.city : null, p.state, p.country].filter(Boolean).join(", "); };
@@ -2577,7 +2639,7 @@ def _(anywidget, asyncio, traitlets):
             else if (e.key === "Escape") { gcHide(); gc.blur(); }
           });
 
-          // ---- fill the window ---------------------------------------------------
+          // ---- fill the window --------------------------------------------------------------
           const FIT_CLS = "at-fit-on";
           if (!document.getElementById("at-fit-style")) {
             const s = document.createElement("style"); s.id = "at-fit-style";
@@ -2587,40 +2649,59 @@ def _(anywidget, asyncio, traitlets):
           function sizes() {
             root.classList.toggle("fit", st.fit);
             document.documentElement.classList.toggle(FIT_CLS, st.fit);
-            pane.style.height = st.fit ? "100vh" : (cfg.height || 760) + "px";
+            pane.style.height = st.fit ? "100vh" : (cfg.height || 780) + "px";
             bFit.innerHTML = st.fit ? ICON.shrink : ICON.expand; bFit.title = st.fit ? "back to the notebook (X or Esc)" : "fill the window (X)";
-            setTimeout(() => { try { map && map.resize(); mapS && mapS.resize(); } catch (e) {} }, 30);
+            setTimeout(() => { try { map && map.resize(); } catch (e) {} }, 30);
           }
           bFit.onclick = () => { st.fit = !st.fit; sizes(); };
-          bMore.onclick = (e) => { e.stopPropagation(); more.style.display = more.style.display === "block" ? "none" : "block"; bMore.classList.toggle("on", more.style.display === "block"); segOnCss(); };
-          more.addEventListener("click", (e) => { e.stopPropagation(); segOnCss(); });
+          bMore.onclick = (e) => { e.stopPropagation(); more.style.display = more.style.display === "block" ? "none" : "block"; bMore.classList.toggle("on", more.style.display === "block"); };
+          more.addEventListener("click", (e) => e.stopPropagation());
           root.addEventListener("click", () => { if (more.style.display === "block") { more.style.display = "none"; bMore.classList.remove("on"); } });
-          bCompare.onclick = () => { st.compare = !st.compare; applyLayout(); };
           window.addEventListener("resize", () => { if (st.fit) sizes(); });
 
-          // ---- keys --------------------------------------------------------------
+          // ---- keys ---------------------------------------------------------------------------
           root.tabIndex = 0;
-          // keys work whenever the map fills the window, or has the focus
           const onKey = (e) => {
             const path = e.composedPath ? e.composedPath() : [];
             if (!st.fit && !path.includes(root)) return;
             const tgt = path[0] || e.target;
             if (tgt && /^(INPUT|SELECT|TEXTAREA)$/.test(tgt.tagName)) return;
             const k = e.key;
-            if (k === "ArrowLeft" || k === "ArrowRight" || k === "[" || k === "]") { stopPlay(); if (st.lens !== "growth") setLens("growth"); setY(st.Y + (k === "ArrowRight" || k === "]" ? 1 : -1)); }
+            // the slider's keys (B W A S layers, Q building colour, [ ] F
+            // imagery year, ; ' brightness, 1-9 the choices of the last row
+            // shown, - = _ + AlphaEarth years, L labels, X window), plus the
+            // arrows and space for the timeline, / search
+            const stepImg = (d) => { const i = S2Y.indexOf(st.imgYear); st.imgYear = S2Y[Math.max(0, Math.min(S2Y.length - 1, i + d))]; stopFlip(true); if (!st.on.img) toggleLayer("img"); styleRows(); update(); };
+            const lo = st.y0, hi = st.y1;
+            if (k === "ArrowLeft" || k === "ArrowRight") { stopPlay(); setY(st.Y + (k === "ArrowRight" ? 1 : -1)); }
             else if (k === " ") { if (tgt && tgt.tagName === "BUTTON") return; togglePlay(); }
-            else if (k === "1" || k === "2" || k === "3") setLens(LENSES[Number(k) - 1][0]);
-            else if (k === "c" || k === "C") { st.compare = !st.compare; applyLayout(); }
+            else if (k === "b" || k === "B") toggleLayer("bld");
+            else if (k === "w" || k === "W") toggleLayer("wsf");
+            else if (k === "a" || k === "A" || k === "e" || k === "E") toggleLayer("hex");
+            else if (k === "s" || k === "S" || k === "i" || k === "I") toggleLayer("img");
+            else if (k === "q" || k === "Q") { const i = BFILLS.findIndex((f) => f[0] === st.bfill); setBfill(BFILLS[(i + 1) % BFILLS.length][0]); }
+            else if (k === "[" || k === "]") stepImg(k === "]" ? 1 : -1);
+            else if (k === "f" || k === "F") { st.imgYear = st.imgYear === S2Y[S2Y.length - 1] ? S2Y[0] : S2Y[S2Y.length - 1]; stopFlip(true); if (!st.on.img) toggleLayer("img"); styleRows(); update(); }
+            else if (k === ";" || k === "'") { st.s2scale = Math.round(10 * Math.max(0.3, Math.min(2.5, st.s2scale + (k === "'" ? 0.1 : -0.1)))) / 10; gam.value = st.s2scale; clearTimeout(gamT); gamT = setTimeout(() => send("s2scale"), 250); }
+            else if (k >= "1" && k <= "9") {
+              // the last row shown: imagery, else AlphaEarth, else buildings
+              const n = Number(k) - 1;
+              if (st.on.img && S2Y[n]) { st.imgYear = S2Y[n]; stopFlip(true); styleRows(); update(); }
+              else if (st.on.hex && n < 2) { st.gmode = n ? "much" : "when"; recolorHex(); styleRows(); renderDock(); update(); }
+              else if (st.on.bld && BFILLS[n]) setBfill(BFILLS[n][0]);
+            }
+            else if (k === "-" || k === "=") { const v = Math.max(2017, Math.min(hi - 1, lo + (k === "=" ? 1 : -1))); if (v !== lo) { st.y0 = v; send("aef"); note(`AlphaEarth years ${st.y0} to ${st.y1}`, 1800); } }
+            else if (k === "_" || k === "+") { const v = Math.max(lo + 1, Math.min(2025, hi + (k === "+" ? 1 : -1))); if (v !== hi) { st.y1 = v; send("aef"); note(`AlphaEarth years ${st.y0} to ${st.y1}`, 1800); } }
+            else if (k === "l" || k === "L") { st.labels = !st.labels; labels(st.labels); swLab.sty(); send("labels"); }
             else if (k === "x" || k === "X") { st.fit = !st.fit; sizes(); }
-            else if (k === "/") { gc.focus(); }
+            else if (k === "/") gc.focus();
             else if (k === "Escape") { if (about.style.display === "flex") about.style.display = "none"; else if (more.style.display === "block") more.style.display = "none"; else if (card.style.display === "block") closeCard(); else if (st.fit) { st.fit = false; sizes(); } }
             else return;
             e.preventDefault();
           };
           window.addEventListener("keydown", onKey);
-          root.addEventListener("pointerup", (e) => { if (e.target && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) return; setTimeout(() => { try { root.focus({preventScroll: true}); } catch (err) {} }, 0); });
 
-          // ---- the camera and the click ------------------------------------------
+          // ---- camera and click ----------------------------------------------------------------
           let seq = 0, lastView = "";
           function sendView() {
             if (!map) return;
@@ -2633,17 +2714,12 @@ def _(anywidget, asyncio, traitlets):
             if (v.zoom >= BLDZ) say("reading footprints…");
           }
           const cellAt = (ll) => { if (res < 0) return null; try { const h = latLngToCell(ll.lat, ll.lng, res); return hexIndex.has(h) ? h : null; } catch (e) { return null; } };
-          const adminAt = (m, pt) => {
+          const adminAt = (pt) => {
             const out = {};
-            const one = (k) => { const id = "ov-div-" + k; if (!m.getLayer(id)) return null; const fs = m.queryRenderedFeatures(pt, {layers: [id]}); return fs && fs.length ? fs[0].properties : null; };
+            const one = (k) => { const id = "ov-div-" + k; if (!map.getLayer(id)) return null; const fs = map.queryRenderedFeatures(pt, {layers: [id]}); return fs && fs.length ? fs[0].properties : null; };
             try { const r = one("region"); if (r) out.region = r["@name"] || r.names || null; const c = one("county"); if (c) out.county = c["@name"] || c.names || null; } catch (e) {}
             return out;
           };
-          function clickAt(ll, pt) {
-            const h = st.hex ? cellAt(ll) : null;
-            model.set("pick", JSON.stringify({cell: h, lon: ll.lng, lat: ll.lat, admin: adminAt(map, pt), n: ++seq}));
-            model.save_changes();
-          }
           function boot() {
             const home = cfg.home || {longitude: 3.6, latitude: 6.46, zoom: 11};
             map = new maplibregl.Map({container: mapEl, style: STYLE, center: [home.longitude, home.latitude], zoom: home.zoom, attributionControl: {compact: true}});
@@ -2660,20 +2736,25 @@ def _(anywidget, asyncio, traitlets):
                   for (const k of ["region", "county"]) map.addLayer({id: "ov-div-" + k, type: "fill", source: "ov-div", "source-layer": "division_area", filter: ["all", ["==", ["get", "subtype"], k], ["==", ["get", "class"], "land"]], paint: {"fill-opacity": 0}}, slot());
                 } catch (e) { console.error("divisions", e); }
               }
-              applyLayout();
+              update(); sendView();
             });
             map.on("moveend", () => { sendView(); countsSoon(); });
             map.on("zoomend", () => { recount(); update(); });
-            map.on("move", () => { if (swiping()) update(); });
-            map.on("mousemove", (e) => { if (!st.hex) return; const h = cellAt(e.lngLat); if (h !== hover) { hover = h; update(); } });
-            map.on("click", (e) => clickAt(e.lngLat, e.point));
+            map.on("mousemove", (e) => { if (!st.on.hex) return; const h = cellAt(e.lngLat); if (h !== hover) { hover = h; update(); } });
+            map.on("click", (e) => {
+              const h = st.on.hex ? cellAt(e.lngLat) : null;
+              model.set("pick", JSON.stringify({cell: h, lon: e.lngLat.lng, lat: e.lngLat.lat, admin: adminAt(e.point), n: ++seq}));
+              model.save_changes();
+            });
             map.on("error", (ev) => { if (ev && ev.error && ev.error.message && !/tile|404/i.test(ev.error.message)) say("map: " + ev.error.message); });
             new ResizeObserver(() => { try { map.resize(); } catch (e) {} }).observe(mapEl);
-            window.__atMaps = () => [map, mapS].filter(Boolean);
-            window.__atState = () => ({st: Object.assign({}, st), polys: polys ? polys.numRows : 0, counts, tiles: tstat, raw: rawTiles.size, meta});
+            window.__atMaps = () => [map];
+            // for tests: the centre of the first hexagon whose ground changed in year y
+            window.__atHexAt = (y) => { for (let i = 0; i < N; i++) if (hattrs && hattrs[4 * i] === y - 2000) { const r = cellToBoundary(hexes[i], true); const c = r.slice(0, -1).reduce((a, p) => [a[0] + p[0] / (r.length - 1), a[1] + p[1] / (r.length - 1)], [0, 0]); return c; } return null; };
+            window.__atState = () => ({st: Object.assign({}, st, {flip: st.flip && {a: st.flip.a, b: st.flip.b, cur: st.flip.cur}}), polys: polys ? polys.numRows : 0, counts, tiles: tstat, raw: rawTiles.size, meta, hex: N, hmeta});
           }
 
-          // ---- the kernel's data ---------------------------------------------------
+          // ---- the kernel's data -----------------------------------------------------------------
           const loadPolys = () => {
             const u8 = bytesOf(model.get("polys"));
             polysSeq++; polys = null;
@@ -2693,48 +2774,34 @@ def _(anywidget, asyncio, traitlets):
             gapSeq++; update();
           };
           const loadHex = () => {
-            const cb = bytesOf(model.get("cells")), kb = bytesOf(model.get("colors"));
-            if (!cb || !cb.length) { hexes = []; N = 0; hexIndex = new Map(); res = -1; hexData = null; update(); return; }
+            const cb = bytesOf(model.get("cells")), ab = bytesOf(model.get("hattrs"));
+            try { hmeta = JSON.parse(model.get("hmeta") || "{}"); } catch (e) { hmeta = {}; }
+            if (!cb || !cb.length) { hexes = []; N = 0; hexIndex = new Map(); res = -1; hattrs = null; hcol = null; recount(); update(); return; }
             const ids = new BigUint64Array(copyOf(cb));
             N = ids.length; hexes = new Array(N); hexIndex = new Map();
             for (let i = 0; i < N; i++) { const h = ids[i].toString(16); hexes[i] = h; hexIndex.set(h, i); }
             try { res = getResolution(hexes[0]); } catch (e) { res = -1; }
-            hcolors = kb && kb.length === 4 * N ? new Uint8Array(copyOf(kb)) : null;
-            hexData = hcolors ? {length: N} : null;
-            update();
-          };
-          const loadHexColors = () => {
-            const kb = bytesOf(model.get("colors"));
-            hcolors = kb && kb.length === 4 * N ? new Uint8Array(copyOf(kb)) : null;
-            hexData = N && hcolors ? {length: N} : null;
-            update();
-          };
-          const renderHexLegend = () => {
-            let items = [];
-            try { items = JSON.parse(model.get("legend") || "[]"); } catch (e) { items = []; }
-            hexLeg.innerHTML = items.filter((it) => it.hex || it.ramp).map((it) => it.ramp
-              ? `<span class="at-key"><i style="width:60px;background:linear-gradient(90deg,${it.ramp.join(",")})"></i>${it.lo} to ${it.hi}</span>`
-              : `<span class="at-key"><i style="background:${it.hex}"></i>${it.name}${it.pct != null ? " " + it.pct + "%" : ""}</span>`).join("");
+            hattrs = ab && ab.length === 4 * N ? new Uint8Array(copyOf(ab)) : null;
+            recolorHex(); recount(); update();
           };
           let pendHex = null;
-          model.on("change:cells", () => { clearTimeout(pendHex); pendHex = setTimeout(loadHex, 0); });
-          model.on("change:colors", () => { clearTimeout(pendHex); pendHex = setTimeout(loadHex, 0); });
+          const hexSoon = () => { clearTimeout(pendHex); pendHex = setTimeout(loadHex, 0); };
+          model.on("change:cells", hexSoon);
+          model.on("change:hattrs", hexSoon);
+          model.on("change:hmeta", hexSoon);
           model.on("change:polys", loadPolys);
           model.on("change:battrs", loadAttrs);
           model.on("change:bmeta", loadAttrs);
           model.on("change:gap", loadGap);
           model.on("change:card", renderCard);
-          model.on("change:legend", renderHexLegend);
           model.on("change:status", () => say(model.get("status")));
-          model.on("change:config", () => {
-            try { cfg = JSON.parse(model.get("config") || "{}"); } catch (e) { cfg = {}; }
-            if (cfg.fill && cfg.fill !== st.fill) { st.fill = cfg.fill; styleFill(); }
-            update();
-          });
+          model.on("change:config", () => { try { cfg = JSON.parse(model.get("config") || "{}"); } catch (e) { cfg = {}; } update(); });
           try {
-            sizes(); boot(); setLens("growth"); loadPolys(); loadAttrs(); loadGap(); loadHex(); renderHexLegend(); say(model.get("status"));
+            sizes(); boot();
+            styleRows();
+            loadPolys(); loadAttrs(); loadGap(); loadHex(); renderDock(); say(model.get("status"));
           } catch (e) { say("boot: " + e.message); console.error(e); }
-          return () => { window.removeEventListener("keydown", onKey); document.documentElement.classList.remove(FIT_CLS); try { map && map.remove(); mapS && mapS.remove(); } catch (e) {} };
+          return () => { window.removeEventListener("keydown", onKey); stopFlip(true); document.documentElement.classList.remove(FIT_CLS); try { map && map.remove(); } catch (e) {} };
         }
         export default {render};
         """
@@ -2765,6 +2832,9 @@ def _(
     S2_YEAR0,
     S2_YEARS,
     VIEW_H,
+    VIRIDIS,
+    ALPHA_FILL,
+    ALPHA_QUIET,
     json,
     mo,
     wsf_bounds,
@@ -2784,6 +2854,8 @@ def _(
         "fills": [[f, FILL_SHORT[f], FILL_NAMES[f]] for f in FILLS],
         "hex_zoom": HEX_ZOOM, "extent": list(wsf_bounds),
         "div_pm": OV_DIV_PM, "bld_zoom": BLD_ZOOM, "ov_release": OV_RELEASE, "fit": _fit,
+        "viridis": VIRIDIS, "alpha_fill": ALPHA_FILL, "alpha_quiet": ALPHA_QUIET,
+        "layers0": {"bld": LAYERS0["bld"], "wsf": LAYERS0["wsf"], "hex": LAYERS0["hex"], "img": LAYERS0["s2"]},
     }))
     HOLD = {
         "frame": None, "sent": None, "box": None, "res": None, "vs": None,
@@ -2931,7 +3003,7 @@ def _(
     def _hexes_off(msg=""):
         if HOLD["sent"] is not None:
             with pair.hold_sync():
-                pair.cells, pair.colors = b"", b""
+                pair.cells, pair.hattrs = b"", b""
             HOLD["sent"] = None
         HOLD["frame"], HOLD["box"], HOLD["res"], HOLD["hit"] = None, None, None, None
         _cfg(hit=None)
@@ -2941,13 +3013,24 @@ def _(
         fr = HOLD["frame"]
         if fr is None:
             return False
-        rgba = fr["fill"](HOLD["fill"], HOLD["hit"])
         _cfg(hit=format(HOLD["hit"], "x") if HOLD["hit"] else None)
-        with pair.hold_sync():
-            if HOLD["sent"] is not fr:
+        if HOLD["sent"] is not fr:
+            # 4 bytes per hexagon, coloured in the browser for the timeline's
+            # year: the AlphaEarth change year (0 no data, 1 no single year,
+            # else year - 2000), how much it moved over the window (1..255 over
+            # this view's p2..p98, 0 no data), the WSF new and built shares
+            when, d = fr["when"], fr["disp"]
+            wc = np.where(when > 0, when - 2000, np.where(when == -1, 1, 0)).astype(np.uint8)
+            lo, hi = fr["shift_lo"], fr["shift_hi"]
+            sh = np.where(np.isnan(d), 0, 1 + 254 * np.clip((np.nan_to_num(d) - lo) / max(hi - lo, 1e-9), 0, 1)).astype(np.uint8)
+            pn = (255 * np.clip(fr["p_new"], 0, 1)).astype(np.uint8)
+            pb = (255 * np.clip(fr["p_built"], 0, 1)).astype(np.uint8)
+            with pair.hold_sync():
                 pair.cells = fr["cellid"].astype("<u8").tobytes()
-                HOLD["sent"] = fr
-            pair.colors = rgba.tobytes()
+                pair.hattrs = np.ascontiguousarray(np.stack([wc, sh, pn, pb], 1)).tobytes()
+                pair.hmeta = json.dumps({"y0": int(fr["y0"]), "y1": int(fr["y1"]), "km2": float(CELL_KM2.get(HOLD["res"], 0)),
+                                         "D0": None if np.isnan(fr["D0"]) else float(fr["D0"])})
+            HOLD["sent"] = fr
         _legend()
         return True
 
@@ -2998,11 +3081,6 @@ def _(
         HOLD["hex_status"] = f"hexagons: {stats} · {fr['score']} · {time.time() - t0:.1f} s"
 
     # ---- the click: a card of plain facts, as JSON the browser lays out ----------
-    def _wcode(f):
-        """WSF index -> the card's code: 0 never, 1 standing by July 2016, else year - 2000."""
-        f = int(f)
-        return 0 if f <= 0 else (1 if f == 1 else 2016 + (f - 1) // 2 - 2000)
-
     def _acode(a):
         """AlphaEarth year -> code: 0 not read, 1 no jump, 2 no data, else year - 2000."""
         if a is None:
@@ -3046,55 +3124,47 @@ def _(
                 "height": float(row["height"]) if row.get("height") is not None else None,
                 "floors": int(row["num_floors"]) if row.get("num_floors") is not None else None,
                 "npx": int(b["npx"][k - 1]), "nbuilt": int(b["built"][k - 1]),
-                "wcode": _wcode(b["first"][k - 1]), "acode": _acode(ay[k - 1] if ay is not None else None),
+                "wk": int(b["first"][k - 1]), "acode": _acode(ay[k - 1] if ay is not None else None),
+                "asteps": [None if np.isnan(v) else float(v) for v in b["asteps"][:, k - 1]] if ay is not None and b.get("asteps") is not None and b["asteps"].shape[0] else None,
+                "ayears": [int(y) for y in b.get("ayears", [])[1:]] if ay is not None else None,
+                "aD0": None if ay is None or np.isnan(b.get("aD0", float("nan"))) else float(b["aD0"]),
             }
-        return {"kind": "ground", "wpixel": _wcode(w), "near": bool(b["near"][r, c]) if b.get("near") is not None else False}
+        return {"kind": "ground", "wk": w, "near": bool(b["near"][r, c]) if b.get("near") is not None else False}
 
 
-    def _hex_lines(p):
+    def _hex_card(p):
+        """The clicked hexagon, as facts for the card: AlphaEarth's change year
+        and year-to-year steps against the quiet level, how much it moved,
+        and WSF's shares."""
         fr = HOLD["frame"]
         cellh = p.get("cell")
         if fr is None or not cellh or not HOLD["on"].get("hex"):
             return None
-        cell = int(cellh, 16)
-        con.register("cur_cells", fr["cells"])
-        r = con.execute("SELECT p_built, p_new, byear, byear_name, first_date, disp, disp_max, when_name FROM cur_cells WHERE cell = ?", [cell]).fetchone()
-        if r is None:
+        cell = np.uint64(int(cellh, 16))
+        ids = fr["cellid"]
+        i = int(np.searchsorted(ids, cell))
+        if i >= len(ids) or ids[i] != cell:
             HOLD["hit"] = None
-            return [f"<span style='opacity:.7'>{cellh}: not in the current frame</span>"]
-        HOLD["hit"] = cell  # a repeat click keeps the pick (Stephen, 2026-09-24: "selecting the same hex again deselects")
-        pb, pn, by, byn, fd, dsp, dmx, wn = r
-        y0, y1 = fr["y0"], fr["y1"]
-        if pb <= 0:
-            l1 = "Hexagon, WSF: no built-up ground."
-        elif by >= 0:
-            l1 = f"Hexagon, WSF: <b>{100 * pb:.0f}%</b> built-up by the end of {y1}; <b>{100 * pn:.1f}%</b> of it built {y0 + 1} to {y1}, most of that in <b>{by}</b>."
-        elif pn > 0:
-            l1 = f"Hexagon, WSF: <b>{100 * pb:.0f}%</b> built-up by the end of {y1}; {100 * pn:.2f}% of it built {y0 + 1} to {y1} (under the {100 * NEW_MIN:g}% that counts as growth)."
-        else:
-            l1 = f"Hexagon, WSF: <b>{100 * pb:.0f}%</b> built-up, all of it before {y0 + 1} (first seen {fd})."
-        if wn.startswith("no AlphaEarth") or dsp is None or np.isnan(dsp):
-            l2 = "Hexagon, AlphaEarth: no embedding."
-        else:
-            s_lo, s_hi = fr.get("shift_lo", 0.0), fr.get("shift_hi", 1.0)
-            t = (float(dsp) - s_lo) / max(s_hi - s_lo, 1e-9)
-            how = "moved <b>significantly</b>" if t >= 0.75 else "moved <b>a fair amount</b>" if t >= 0.4 else "moved <b>a little</b>" if t >= 0.15 else "<b>barely moved</b>"
-            l2 = f"Hexagon, AlphaEarth: the fingerprint {how} from {y0} to {y1} (shift {_f(dsp)})"
-            l2 += ("; no single year stood out." if wn.startswith("no single year") else f", most sharply in <b>{wn.split('changed in ')[1].split(' ')[0]}</b>.")
-        return [l1, l2 + f" <span style='color:#777'>({CELL_KM2.get(HOLD['res'], 0):.3f} km²)</span>"]
+            return {"kind": "note", "title": "That hexagon is not in the current view's frame."}
+        HOLD["hit"] = int(cell)
+        d = float(fr["disp"][i])
+        lo, hi = fr.get("shift_lo", 0.0), fr.get("shift_hi", 1.0)
+        steps = [None if np.isnan(v) else float(v) for v in fr["steps"][:, i]] if len(fr["step_years"]) else []
+        return {
+            "kind": "hex", "when": int(fr["when"][i]), "level": None if np.isnan(d) else float(np.clip((d - lo) / max(hi - lo, 1e-9), 0, 1)),
+            "y0": int(fr["y0"]), "y1": int(fr["y1"]), "p_built": float(fr["p_built"][i]), "p_new": float(fr["p_new"][i]), "byear": int(fr["byear"][i]),
+            "steps": steps, "step_years": [int(yb) for _, yb in fr["step_years"]], "D0": None if np.isnan(fr["D0"]) else float(fr["D0"]),
+            "km2": float(CELL_KM2.get(HOLD["res"], 0)),
+        }
 
     def _card_send(p, place=None):
         """Build and send the card for the pick p (kept, so it can be rebuilt
         when AlphaEarth lands or the place arrives)."""
-        card = _bld_card(p) or {}
-        extra = _hex_lines(p) or []
-        if not card and extra:
-            card = {"kind": "note", "title": "AlphaEarth hexagon"}
+        card = _hex_card(p) or _bld_card(p) or {}
         if not card:
             HOLD["card"] = None
             pair.card = ""
             return
-        card["extra"] = extra
         prev = HOLD.get("card") or {}
         card["place"] = place if place is not None else (prev.get("place") if prev.get("n") == p.get("n") else [])
         card["n"] = p.get("n")
@@ -3128,7 +3198,7 @@ def _(
 
     def _bld_send():
         """The footprints' attributes for the browser, 4 bytes each: the WSF
-        code (0 never, 1 standing by July 2016, else year - 2000), the
+        index (0 never, 1 standing by July 2016, k the half-year), the
         AlphaEarth code (0 not read, 1 no jump, 2 no data, else year - 2000),
         the source's index (by how common it is in the box) and the year its
         source last touched it (year - 2000). The browser colours them for the
@@ -3139,7 +3209,7 @@ def _(
         from collections import Counter
         n = b["rows"].num_rows
         first = b["first"]
-        wy = np.where(first <= 0, 0, np.where(first == 1, 1, 2016 + (first - 1) // 2 - 2000)).astype(np.uint8)
+        wy = np.clip(first, 0, 20).astype(np.uint8)  # the WSF index itself: the browser knows its half-years
         ay = b.get("ayear")
         if ay is None:
             ac = np.zeros(n, np.uint8)
@@ -3486,6 +3556,15 @@ def _(
                 HOLD["fill"] = f
                 _cfg(fill=f)
                 _paint()
+            return
+        if act == "hex":
+            new = {k: bool(v) for k, v in (c.get("on") or {}).items()}
+            a, b = int(c.get("y0", HOLD["y0"])), int(c.get("y1", HOLD["y1"]))
+            if a in AEF_YEARS_ALL and b in AEF_YEARS_ALL and a < b:
+                HOLD["y0"], HOLD["y1"] = a, b
+            HOLD["on"] = new
+            _cfg(layers=new, aef_from=HOLD["y0"], aef_to=HOLD["y1"])
+            _request(force=True)
             return
         if act == "witness":
             # "dated by AlphaEarth" (or the card's "check with AlphaEarth"):
