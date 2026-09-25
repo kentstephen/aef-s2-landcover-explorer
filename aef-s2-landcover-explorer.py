@@ -169,8 +169,8 @@ def _(mo):
     | scroll, space held | the imagery year |
     | `[` `]` | the imagery year, back and forward |
     | `;` `'` | the imagery darker, brighter |
-    | `S` | color by how much it changed |
-    | `D` | color by the year of the biggest change |
+    | `S` | AEF Change: how much it changed |
+    | `D` | AEF Change Year: the year of the biggest change |
     | `-` `=` | the first year read, earlier, later |
     | `_` `+` | the last year read, earlier, later |
     | `L` | place names on the map, off and on |
@@ -1401,8 +1401,6 @@ def _(anywidget, asyncio, time, traitlets):
         .at-panel.collapsed{padding:2px 3px 2px 10px;gap:0;border-radius:10px}
         .at-panel.collapsed .at-hd .t{font-size:12px}
         .at-panel.collapsed .at-cb{width:22px;height:22px}
-        .at-hd .t .s,.at-panel.collapsed .at-hd .t .l{display:none}
-        .at-panel.collapsed .at-hd .t .s{display:inline}
         .at-panel.collapsed .at-row{display:none}
         .at-yc .yr .at-cb{margin-left:auto;align-self:flex-start;margin-top:-4px;margin-right:-8px}
         .at-yc.collapsed{width:auto}
@@ -1564,7 +1562,7 @@ def _(anywidget, asyncio, time, traitlets):
           const panel = el_("div", "at-panel at-glass");
           // every panel folds (Stephen, 2026-09-25); the fold is remembered in this browser
           const keep = (k, v) => { try { if (v === undefined) return localStorage.getItem("aef-lc-" + k) === "1"; localStorage.setItem("aef-lc-" + k, v ? "1" : "0"); } catch (e) {} return false; };
-          const panelHd = el_("div", "at-hd", `<span class="t">AlphaEarth change</span>`);
+          const panelHd = el_("div", "at-hd", `<span class="t">AEF Change</span>`);
           const panelCb = el_("button", "at-cb", ICON.chev);
           panelHd.appendChild(panelCb);
           panel.appendChild(panelHd);
@@ -1580,8 +1578,8 @@ def _(anywidget, asyncio, time, traitlets):
           };
           const rFill = rowOf("Color by");
           rFill.classList.add("top");
-          const styleFill = segOf(rFill, [["much", "How much it changed", "how far the ground's AlphaEarth numbers moved between the first and last year read (S)"],
-                                          ["year", "Year of the biggest change", "the year each hexagon's change stood out most against the usual change that year, faded where the ground barely moved (D)"]],
+          const styleFill = segOf(rFill, [["much", "AEF Change", "how far the ground's AlphaEarth numbers moved between the first and last year read (S)"],
+                                          ["year", "AEF Change Year", "the year each hexagon's change stood out most against the usual change that year, faded where the ground barely moved (D)"]],
                                   (k) => k === st.gmode, (k) => { st.gmode = k; recolorHex(); styleRows(); update(); });
           const rKey = rowOf("");
           rKey.classList.add("keep");
@@ -1620,8 +1618,8 @@ def _(anywidget, asyncio, time, traitlets):
           function styleKey() {
             const y0 = hmeta.y0 || st.y0, y1 = hmeta.y1 || st.y1;
             const out_ = map && map.getZoom() < HEXZ;
-            // folded, the short name (Stephen, 2026-09-25: "just can say aef change")
-            panelHd.querySelector(".t").innerHTML = out_ ? `<span class="l">Land cover</span><span class="s">Land cover</span>` : `<span class="l">AlphaEarth change</span><span class="s">AEF change</span>`;
+            // the title is what is drawn, open or folded (Stephen, 2026-09-25)
+            panelHd.querySelector(".t").textContent = out_ ? "Land cover" : st.gmode === "year" ? "AEF Change Year" : "AEF Change";
             // no hexagons zoomed out, so nothing to color (Stephen, 2026-09-25)
             rFill.style.display = out_ ? "none" : "";
             if (out_) {
@@ -1666,10 +1664,10 @@ def _(anywidget, asyncio, time, traitlets):
           const about = el_("div", "at-about");
           about.innerHTML = `<div class="box at-glass">
             <h2>Where the ground changed</h2>
-            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. The hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Switch to <b>year of the biggest change</b> to color each hexagon by the year its change stood out most, light yellow for the first year to dark brown for the last. Each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all). Hexagons fade where they barely moved.</p>
+            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. The hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Switch to <b>AEF Change Year</b> to color each hexagon by the year its change stood out most, light yellow for the first year to dark brown for the last. Each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all). Hexagons fade where they barely moved.</p>
             <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: move it off what you want to see, drag the map to look around, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
             <p><b>Click</b> a hexagon for its account: each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. WorldCover is one map of one year, so it says what a place is, not when it changed.</p>
-            <p><small>Keys: hold space for the imagery, scroll for its year; S how much it changed, D the year of the biggest change; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search; Esc close.</small></p>
+            <p><small>Keys: hold space for the imagery, scroll for its year; S AEF Change, D AEF Change Year; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search; Esc close.</small></p>
             <p><small>AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions (ODbL), the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
           pane.appendChild(about);
@@ -2244,6 +2242,66 @@ def _(anywidget, asyncio, time, traitlets):
     return (ChangeMap,)
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## How it works
+
+    **AlphaEarth, folded to H3.** Every 10 m pixel of the AlphaEarth
+    Foundations embedding is 64 numbers describing the ground for one year.
+    For the view on screen, the notebook reads each year in the window
+    (2021 to 2025 by default, 2017 to 2025 available) from Source
+    Cooperative: the COG overviews at coarser hexagons, the zarr mosaic
+    from res 11 in. Each pixel's lon/lat goes through an h3ronpy UDF inside
+    DataFusion (via xarray-sql), and the pixels are averaged per cell,
+    one fold per year. The hexagon size follows the zoom.
+
+    **The brightest patch, not the average.** The fold runs one H3 level
+    finer than the hexagons on screen, about one pixel of the read per finer
+    cell, and the change is worked out per finer cell. Each hexagon then
+    shows its most-changed finer cell: its change, its year, its steps. So
+    one changed site inside a big hexagon keeps it bright zoomed out,
+    instead of being averaged away by the quiet ground around it.
+
+    **Drawn as tiles.** The hexagons reach the browser as map tiles in
+    which every pixel names the hexagon it falls in, colored in the
+    browser; hover and click look the hexagon up from the pointer with
+    h3-js. The browser draws images, however many hexagons there are.
+
+    **AEF Change (viridis, `S`).** Each hexagon's yearly vector is
+    normalized, and `disp` is 1 minus the cosine between the window's first
+    and last year: 0 means the fingerprint did not move. The fill stretches
+    `disp` to this view's 2nd to 98th percentile, so the colors rank the
+    hexagons against their neighbors, not against the world. Hexagons
+    that barely moved are drawn faint.
+
+    **AEF Change Year (YlOrBr, `D`).** Every year-to-year step is scored
+    the same way. The embeddings drift as a whole between some years (over
+    Lagos the 2024 to 2025 median step is about twice the others), so the
+    raw biggest step would land on 2025 almost everywhere. Each step is
+    divided by that year's median step in view instead, and the change year
+    is the step that stands out most. The card on a clicked hexagon shows
+    those ratios against 1.
+
+    **What is there (ESA WorldCover 2021).** The same fold, on the class
+    raster read straight from ESA's bucket: a count of pixels per class per
+    hexagon, shown as shares. It is one year only, so it describes the
+    ground; it does not date anything.
+
+    **Zoomed out (below zoom 9).** The map is WorldCover itself, drawn as
+    tiles from the same COGs (the coarsest overview that still fills each
+    tile), in a palette without red: built-up deep violet, cropland gold,
+    vegetation in greens, water blue. It shows where the towns, farmland and
+    water are; from zoom 9 the AlphaEarth change hexagons take over.
+
+    **What happened (Sentinel-2).** Holding the map swaps the hexagons for
+    Earth Genome's yearly true-color mosaic, 2022 to 2025, so the change
+    the hexagons point to can be checked against the imagery. Nothing
+    colored is drawn over it.
+    """)
+    return
+
+
 @app.cell
 def _(
     AEF_FROM0,
@@ -2713,66 +2771,6 @@ def _(
     else:
         HOLD["sent"] = None
         _paint()
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md("""
-    ## How it works
-
-    **AlphaEarth, folded to H3.** Every 10 m pixel of the AlphaEarth
-    Foundations embedding is 64 numbers describing the ground for one year.
-    For the view on screen, the notebook reads each year in the window
-    (2021 to 2025 by default, 2017 to 2025 available) from Source
-    Cooperative: the COG overviews at coarser hexagons, the zarr mosaic
-    from res 11 in. Each pixel's lon/lat goes through an h3ronpy UDF inside
-    DataFusion (via xarray-sql), and the pixels are averaged per cell,
-    one fold per year. The hexagon size follows the zoom.
-
-    **The brightest patch, not the average.** The fold runs one H3 level
-    finer than the hexagons on screen, about one pixel of the read per finer
-    cell, and the change is worked out per finer cell. Each hexagon then
-    shows its most-changed finer cell: its change, its year, its steps. So
-    one changed site inside a big hexagon keeps it bright zoomed out,
-    instead of being averaged away by the quiet ground around it.
-
-    **Drawn as tiles.** The hexagons reach the browser as map tiles in
-    which every pixel names the hexagon it falls in, colored in the
-    browser; hover and click look the hexagon up from the pointer with
-    h3-js. The browser draws images, however many hexagons there are.
-
-    **How much it changed (viridis).** Each hexagon's yearly vector is
-    normalized, and `disp` is 1 minus the cosine between the window's first
-    and last year: 0 means the fingerprint did not move. The fill stretches
-    `disp` to this view's 2nd to 98th percentile, so the colors rank the
-    hexagons against their neighbors, not against the world. Hexagons
-    that barely moved are drawn faint.
-
-    **When it changed (YlOrBr, `D`).** Every year-to-year step is scored
-    the same way. The embeddings drift as a whole between some years (over
-    Lagos the 2024 to 2025 median step is about twice the others), so the
-    raw biggest step would land on 2025 almost everywhere. Each step is
-    divided by that year's median step in view instead, and the change year
-    is the step that stands out most. The card on a clicked hexagon shows
-    those ratios against 1.
-
-    **What is there (ESA WorldCover 2021).** The same fold, on the class
-    raster read straight from ESA's bucket: a count of pixels per class per
-    hexagon, shown as shares. It is one year only, so it describes the
-    ground; it does not date anything.
-
-    **Zoomed out (below zoom 9).** The map is WorldCover itself, drawn as
-    tiles from the same COGs (the coarsest overview that still fills each
-    tile), in a palette without red: built-up deep violet, cropland gold,
-    vegetation in greens, water blue. It shows where the towns, farmland and
-    water are; from zoom 9 the AlphaEarth change hexagons take over.
-
-    **What happened (Sentinel-2).** Holding the map swaps the hexagons for
-    Earth Genome's yearly true-color mosaic, 2022 to 2025, so the change
-    the hexagons point to can be checked against the imagery. Nothing
-    colored is drawn over it.
-    """)
     return
 
 
