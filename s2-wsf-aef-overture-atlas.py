@@ -2101,7 +2101,7 @@ def _(anywidget, asyncio, traitlets):
             <p>Turn the layers on and off in the panel at the top left. <b>Buildings</b>: the footprints from Overture Maps, each lit by when the World Settlement Footprint tracker (WSF) first read the ground under it as built-up. WSF looks twice a year, July 2016 to January 2026, at 10 m. Each year has its own colour, light yellow for 2016 to dark brown for 2025; a grey outline was already standing in 2016; buildings from after the timeline's year are not drawn yet. Zoomed out, the same colours paint WSF's built-up ground. You can switch the date to AlphaEarth's instead.</p>
             <p><b>AlphaEarth</b>: describes every 10 m of ground with 64 numbers a year, 2017 to 2025. When those numbers jump from one year to the next by more than they do on ground WSF says stayed the same (the quiet level), the ground changed that year: building, clearing, water, fields. Hexagons show the year it changed, or how much.</p>
             <p>The buildings can also be coloured for a <b>map check</b>: buildings on the map WSF never read as built-up (blue), and built-up ground 20 m or more from any building on the map (amber); or by <b>source</b>, the dataset each came from.</p>
-            <p><b>Imagery</b> adds the Sentinel-2 yearly mosaic (2022 to 2025). Click something that changed in 2023 to 2025 and the imagery flips between the year before and the year after on its own.</p>
+            <p><b>Imagery</b> adds the Sentinel-2 yearly mosaic (2022 to 2025). The card of something that changed in 2023 to 2025 has buttons for the imagery of the year before and the year after.</p>
             <p><small>Keys: B W A S the layers; Q the buildings' colour; arrows the timeline year, space play; [ ] and F the imagery year, ; and ' its brightness; 1 to 9 the choices in the last row shown; - = and _ + the AlphaEarth years; L place names; X fill the window; / search; Esc close.</small></p>
             <p><small>WSF Tracker (c) DLR and MindEarth. AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Overture Maps buildings and divisions (ODbL). Photon over OpenStreetMap (ODbL). Basemap by Carto. Overture release ${cfg.ov_release || ""}.</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
@@ -2472,19 +2472,6 @@ def _(anywidget, asyncio, traitlets):
             return [y - 1, Math.min(y + 1, S2Y[S2Y.length - 1])];
           }
           let flipT = null;
-          function startFlip(pair, why) {
-            stopFlip(true);
-            st.flip = {a: pair[0], b: pair[1], cur: pair[0], why, wasImagery: st.on.img, paused: false};
-            if (!st.on.img) { st.on.img = true; styleRows(); recolor(); }
-            st.imgYear = pair[0];
-            const tick = () => {
-              const f = st.flip; if (!f) return;
-              if (!f.paused) { f.cur = f.cur === f.a ? f.b : f.a; st.imgYear = f.cur; styleFlip(); styleImgRow(); update(); }
-              flipT = setTimeout(tick, 1100);
-            };
-            styleFlip(); update();
-            flipT = setTimeout(tick, 1400);
-          }
           function stopFlip(keep) {
             clearTimeout(flipT); flipT = null;
             const f = st.flip; st.flip = null;
@@ -2631,7 +2618,7 @@ def _(anywidget, asyncio, traitlets):
             // the before and after
             const pair = flipPair(changeY);
             if (changeY) {
-              if (pair) h += `<div class="flip"><div>Imagery, before and after (${changeWhy} ${changeY}):</div><div class="yrs"><button class="at-chip" data-flip="${pair[0]}">${pair[0]} before</button><button class="at-chip" data-flip="${pair[1]}">${pair[1]} after</button><button class="at-chip" data-act="pause">Hold</button></div></div>`;
+              if (pair) h += `<div class="flip"><div>Imagery, before and after (${changeWhy} ${changeY}):</div><div class="yrs"><button class="at-chip" data-flip="${pair[0]}">${pair[0]} before</button><button class="at-chip" data-flip="${pair[1]}">${pair[1]} after</button></div></div>`;
               else h += `<div class="flip muted">${changeWhy} dates this to ${changeY}, before the imagery starts in ${S2Y[0]}, so there's no picture from before it to compare.</div>`;
             }
             card.innerHTML = h;
@@ -2639,13 +2626,12 @@ def _(anywidget, asyncio, traitlets):
             card.querySelector(".x").onclick = () => closeCard();
             const ab = card.querySelector("[data-act=aef]");
             if (ab) ab.onclick = () => { ab.disabled = true; ab.textContent = "Reading AlphaEarth…"; send("witness"); };
-            card.querySelectorAll("[data-flip]").forEach((b) => { b.onclick = () => { if (!st.flip) return; st.flip.paused = true; st.flip.cur = Number(b.dataset.flip); st.imgYear = st.flip.cur; styleFlip(); update(); }; });
-            const pb = card.querySelector("[data-act=pause]");
-            if (pb) pb.onclick = () => { if (!st.flip) return; st.flip.paused = !st.flip.paused; styleFlip(); };
-            const same = st.flip && pair && st.flip.a === pair[0] && st.flip.b === pair[1] && st.flip.n === c.n;
-            if (pair && !same) { startFlip(pair, changeWhy); st.flip.n = c.n; }
-            else if (!pair && st.flip) stopFlip();
-            else styleFlip();
+            // before and after only when asked: a button sets the imagery to its
+            // year and it stays there (Stephen, 2026-09-24: "the imagery
+            // flashing back and forth without me prompting it needs to go")
+            const markYears = () => card.querySelectorAll("[data-flip]").forEach((b) => b.classList.toggle("on", st.on.img && Number(b.dataset.flip) === st.imgYear));
+            card.querySelectorAll("[data-flip]").forEach((b) => { b.onclick = () => { st.imgYear = Number(b.dataset.flip); if (!st.on.img) toggleLayer("img"); styleRows(); update(); markYears(); }; });
+            markYears();
             const idx = c.kind === "footprint" && c.idx != null ? c.idx : -1;
             if (idx !== st.picked) { st.picked = idx; recolor(); update(); }
           }
