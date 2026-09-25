@@ -1745,7 +1745,7 @@ def _(anywidget, asyncio, time, traitlets):
             }
             hexSeq++;
           }
-          const hexAt = (ll) => { if (res < 0) return -1; try { const h = latLngToCell(ll.lat, ll.lng, res); const i = hexIndex.get(h); return i == null ? -1 : i; } catch (e) { return -1; } };
+          const hexAt = (ll) => { if (res < 0 || !map || map.getZoom() < HEXZ) return -1; try { const h = latLngToCell(ll.lat, ll.lng, res); const i = hexIndex.get(h); return i == null ? -1 : i; } catch (e) { return -1; } };
           function hexWords(i) {
             const o = 4 * i, yb = hattrs[o], lv = hattrs[o + 1], lc = hattrs[o + 2], sh = hattrs[o + 3];
             if (!lv) return "No AlphaEarth data here.";
@@ -2480,15 +2480,6 @@ def _(
         return out
 
     # ---- the hexagons -------------------------------------------------------------
-    def _hexes_off(msg=""):
-        if HOLD["sent"] is not None:
-            with cmap.hold_sync():
-                cmap.cells, cmap.hattrs = b"", b""
-                cmap.hmeta = "{}"
-            HOLD["sent"] = None
-        HOLD["frame"], HOLD["box"], HOLD["res"], HOLD["hit"] = None, None, None, None
-        HOLD["hex_status"] = msg
-
     def _paint():
         """Send the frame once: 4 bytes per hexagon, colored in the browser."""
         fr = HOLD["frame"]
@@ -2512,7 +2503,10 @@ def _(
     async def _serve_hex(vsd, force=False):
         view = view_to_bbox(vsd)
         box = pad_box(view)
-        if HOLD["box"] is not None and contains(HOLD["box"], view) and not force and min(15, res_for_view(vsd, box) + HEX_UP) <= HOLD["res"]:
+        fr0 = HOLD["frame"]
+        if (fr0 is not None and HOLD["box"] is not None and contains(HOLD["box"], view) and not force
+                and min(15, res_for_view(vsd, box) + HEX_UP) <= HOLD["res"] and (fr0["y0"], fr0["y1"]) == (HOLD["y0"], HOLD["y1"])):
+            HOLD["hex_status"] = HOLD.get("hex_ready") or HOLD["hex_status"]
             return
         rres = res_for_view(vsd, box)
         res = min(15, rres + HEX_UP)
@@ -2572,14 +2566,16 @@ def _(
                 HOLD["memo"].pop(next(iter(HOLD["memo"])))
         HOLD["frame"], HOLD["box"], HOLD["res"] = fr, box, res
         _paint()
-        HOLD["hex_status"] = f"hexagons: {stats} | {fr['score']} | {time.time() - t0:.1f} s"
+        HOLD["hex_status"] = HOLD["hex_ready"] = f"hexagons: {stats} | {fr['score']} | {time.time() - t0:.1f} s"
         if HOLD.get("card_pick"):
             _card_send(HOLD["card_pick"])
 
     async def _serve(vs, force=False):
         vsd = _vsd(vs)
         if vsd["zoom"] < HEX_ZOOM:
-            _hexes_off(f"hexagons from zoom {HEX_ZOOM:g}")
+            # the frame stays (hidden in the browser, its tiles cached there),
+            # so zooming back in over the same ground is instant
+            HOLD["hex_status"] = f"hexagons from zoom {HEX_ZOOM:g}"
         else:
             await _serve_hex(vsd, force)
         _say(HOLD["hex_status"])
