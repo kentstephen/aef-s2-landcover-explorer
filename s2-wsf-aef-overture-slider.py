@@ -15,13 +15,15 @@
 #     "duckdb>=1.5.5",
 #     "pyproj",
 #     "pillow",
+#     "shapely>=2.0",
+#     "rasterio",
 # ]
 # ///
 
 
 """Overture buildings, one map, the other datasets as layers, S2 behind a slider.
 
-The Overture building footprints are the map (from zoom 14, over a plain
+The Overture building footprints are the map (from zoom 13, over a plain
 vector basemap), each coloured by one thing at a time: the earliest
 half-year WSF read the ground under it as built-up; the first year its own
 AlphaEarth fingerprint jumped; the share of its pixels WSF reads as built;
@@ -61,6 +63,7 @@ app = marimo.App(width="full", sql_output="native")
 @app.cell
 def _():
     import asyncio
+    import itertools
     import json
     import math
     import os
@@ -91,6 +94,20 @@ def _():
     import io
     from PIL import Image
 
+    # CPU work (the DataFusion folds, tile compositing and PNG encoding, the
+    # footprint rasterizing) leaves the event loop for ONE small pool, so the
+    # network reads (asyncio, US East to the us-west-2 buckets) keep flowing
+    # while it runs and a small machine (molab) is not flooded: at most
+    # CPU_WORKERS such jobs at once, the rest queue
+    from concurrent.futures import ThreadPoolExecutor
+
+    CPU_WORKERS = max(2, min(4, (os.cpu_count() or 2) - 1))
+    _cpu_pool = ThreadPoolExecutor(CPU_WORKERS, thread_name_prefix="cpu")
+
+    async def cpu(fn, *args):
+        """fn(*args) on the CPU pool, awaited."""
+        return await asyncio.get_running_loop().run_in_executor(_cpu_pool, lambda: fn(*args))
+
     return (
         GeoTIFF,
         Image,
@@ -102,8 +119,10 @@ def _():
         anywidget,
         asyncio,
         coordinates_to_cells,
+        cpu,
         duckdb,
         io,
+        itertools,
         json,
         math,
         mo,
@@ -137,7 +156,7 @@ def _(mo):
     mo.md("""
     # Overture buildings, with the other datasets as layers
 
-    One map. **WSF** and **buildings** are on when it opens. From zoom 14 the
+    One map. **WSF** and **buildings** are on when it opens. From zoom 13 the
     Overture building footprints are drawn with a gold edge, each coloured by
     one thing you pick under **BUILDINGS** (key `Q` steps through them):
 
@@ -244,6 +263,12 @@ def _(os, tempfile):
     # never folded. The fold reads level 0 on a stride that fits WSF_MAX_PX
     # samples.
     WSF_BUCKET = "us-west-2.opendata.source.coop"
+    # every S3 read (WSF, AlphaEarth COGs and mosaic, S2) from here to
+    # us-west-2: a few requests in a batch stall until the client timeout and
+    # are retried, and the default 30 s timeout made a 3 s AlphaEarth mosaic
+    # read take 31 to 42 s (US East Coast, 2026-09-24: block median 1.5 s,
+    # slowest good block 2.7 s). 6 s cuts a stall short and the retry lands
+    S3_OPTS = {"timeout": "6s", "connect_timeout": "3s"}
     WSF_PREFIX = "mindearth/wsf/World_WSF_20160701-20260101.zarr"
     WSF_RES, WSF_X0, WSF_Y0 = 8.983152841195216e-05, -180.00001488697754, 78.0100585990529
     WSF_LEVELS = 13
@@ -318,11 +343,13 @@ def _(os, tempfile):
     OV_STAC_ROOT = "https://stac.overturemaps.org/catalog.json"
     OV_PORTOLAN = "https://nlebovits.github.io/overture-portolan"
     OV_TILES = "https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles"
-    # the footprints come in past this zoom (a 700 px pane is ~4.7 km wide
-    # here; padded, ~40 km2, some 25k footprints in a dense city centre); a
-    # view holding more than BLD_MAX rows is refused with "zoom in"
-    BLD_ZOOM = 14.0
-    BLD_MAX = 60_000
+    # the footprints come in past this zoom (a 700 px pane is ~9.4 km wide
+    # here; padded, ~160 km2, some 100k footprints in a dense city centre); a
+    # view holding more than BLD_MAX rows is refused with "zoom in". Was 14
+    # and 60k (Stephen, 2026-09-24: "we can load the buildings a little more
+    # zoomed out").
+    BLD_ZOOM = 13.0
+    BLD_MAX = 150_000
     # ---- the buildings by themselves, coloured by what we know about them ----
     # (Stephen, 2026-09-24: "just visualize the buildings by themselves and
     # color by the information where we have with them"). Past BLD_ZOOM the
@@ -361,7 +388,7 @@ def _(os, tempfile):
     # and then optionally the base maps"): footprints over the raster over the
     # hexagons, S2 the optional base under them all
     LAYERS0 = {"bld": True, "wsf": True, "hex": False, "s2": False}
-    LAYER_DEFS = (("bld", "buildings", "Overture footprints, one fill at a time (from zoom 14)"),
+    LAYER_DEFS = (("bld", "buildings", "Overture footprints, one fill at a time (from zoom 13)"),
                   ("wsf", "WSF", "the WSF Tracker raster: one colour per year of first detection"),
                   ("hex", "AEF", "the AlphaEarth embeddings (and WSF) folded to H3 hexagons over the year window (from zoom 9, finer as you zoom, res 12 from 14.6)"),
                   ("s2", "S2", "the Sentinel-2 yearly mosaic on the left of a divider you drag, the data on its right"))
@@ -429,6 +456,7 @@ def _(os, tempfile):
         PAD,
         PER_RES,
         RASTER_TILE,
+        S3_OPTS,
         S2_COLLECTION,
         S2_FILL_COLLECTION,
         S2_PYRAMID_Z,
@@ -536,6 +564,7 @@ def _(
     ObjectStore,
     RASTER_TILE,
     S3Store,
+    S3_OPTS,
     WSF_BUCKET,
     WSF_LEVELS,
     WSF_MAX_PX,
@@ -546,8 +575,10 @@ def _(
     WSF_Y0,
     YEAR_RGB,
     asyncio,
+    cpu,
     ctx,
     io,
+    itertools,
     math,
     np,
     time,
@@ -565,12 +596,12 @@ def _(
     # protects). The tiles (`wsf_tile_png`, the right pane below HEX_ZOOM) read
     # the level whose pixel is nearest the tile's own, which is what a browse
     # pyramid is for.
-    _store = S3Store(WSF_BUCKET, region="us-west-2", skip_signature=True, prefix=WSF_PREFIX)
+    _store = S3Store(WSF_BUCKET, region="us-west-2", skip_signature=True, prefix=WSF_PREFIX, client_options=S3_OPTS)
     _root = zarr.open_group(ObjectStore(_store, read_only=True), mode="r")
     _arr = {k: _root[str(k)]["wsf_tracker"] for k in range(WSF_LEVELS)}
     _win = {}
     _sem = asyncio.Semaphore(6)
-    _fold_lock = asyncio.Lock()
+    _seq = itertools.count()  # a table name per fold, so folds run side by side
     _png_cache = {}
 
     def idx_year(k):
@@ -645,6 +676,13 @@ def _(
         if got is None:
             _png_cache[key] = None
             return None
+        _png_cache[key] = await cpu(_wsf_png, got, k, n, y, lon0, lon1)
+        if len(_png_cache) > 4000:
+            _png_cache.pop(next(iter(_png_cache)))
+        return _png_cache[key]
+
+    def _wsf_png(got, k, n, y, lon0, lon1):
+        T = RASTER_TILE
         arr, lon, lat = got
         ys = np.pi * (1 - 2 * (y + (np.arange(T) + 0.5) / T) / n)
         lat_c = np.degrees(np.arctan(np.sinh(ys)))
@@ -657,14 +695,10 @@ def _(
         pxv = np.where(okr[:, None] & okc[None, :], pxv, 0)
         rgba = _cmap[pxv.astype(np.uint8)]
         if not rgba[..., 3].any():
-            _png_cache[key] = None
             return None
         buf = io.BytesIO()
         Image.fromarray(np.ascontiguousarray(rgba), mode="RGBA").save(buf, format="PNG")
-        _png_cache[key] = buf.getvalue()
-        if len(_png_cache) > 4000:
-            _png_cache.pop(next(iter(_png_cache)))
-        return _png_cache[key]
+        return buf.getvalue()
 
     _CNT = ", ".join(f"sum(CASE WHEN idx = {k} THEN 1 ELSE 0 END) AS c{k:02d}" for k in range(1, WSF_NIDX + 1))
 
@@ -687,29 +721,32 @@ def _(
         arr, lon, lat = got
         tr = time.time()
         h, w = arr.shape
-        LON, LAT = np.meshgrid(lon, lat)
-        async with _fold_lock:
-            try:
-                ctx.deregister_table("wsf")
-            except Exception:
-                pass
+
+        def _run():
+            name = f"wsf_{next(_seq)}"
+            LON, LAT = np.meshgrid(lon, lat)
             ctx.from_dataset(
-                "wsf",
+                name,
                 xr.Dataset(
                     {"idx": (("y", "x"), arr.astype(np.int16)), "lat": (("y", "x"), LAT), "lon": (("y", "x"), LON)},
                     coords={"y": np.arange(h), "x": np.arange(w)},
                 ),
                 chunks={"y": 512},
             )
-            out = ctx.sql(f"""
-                SELECT h3_latlng_to_cell(lat, lon, CAST({res} AS INT)) AS cell,
-                       count(*) AS npx,
-                       sum(CASE WHEN idx > 0 THEN 1 ELSE 0 END) AS built,
-                       {_CNT}
-                FROM wsf
-                WHERE lon >= {W_} AND lon < {E_} AND lat >= {S_} AND lat < {N_}
-                GROUP BY cell
-            """).to_arrow_table()
+            try:
+                return ctx.sql(f"""
+                    SELECT h3_latlng_to_cell(lat, lon, CAST({res} AS INT)) AS cell,
+                           count(*) AS npx,
+                           sum(CASE WHEN idx > 0 THEN 1 ELSE 0 END) AS built,
+                           {_CNT}
+                    FROM {name}
+                    WHERE lon >= {W_} AND lon < {E_} AND lat >= {S_} AND lat < {N_}
+                    GROUP BY cell
+                """).to_arrow_table()
+            finally:
+                ctx.deregister_table(name)
+
+        out = await cpu(_run)
         return out, (
             f"WSF {w:,}x{h:,} samples (stride {stride}, {10 * stride} m) read {tr - t0:.1f} s · fold {out.num_rows:,} {time.time() - tr:.1f} s"
         )
@@ -733,25 +770,54 @@ def _(
     MOSAIC_MIN_RES,
     ObjectStore,
     S3Store,
+    S3_OPTS,
     Transformer,
     Window,
     asyncio,
+    cpu,
     ctx,
     duckdb,
+    itertools,
     np,
     os,
     pq,
     time,
     xr,
+    zarr,
 ):
     # ---- AlphaEarth: the COG overviews (mosaic past res 10), one fold per year --
     # `aef_fold(box, res, year)` for any year in AEF_YEARS_ALL (2017..2025, the
     # whole run; the window control picks from them); each year has its own COG index
     # slice (cached as parquet under tmp) and its own mosaic time index.
-    _store = S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True)
-    _mstore = S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, prefix=AEF_PREFIX)
+    _store = S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, client_options=S3_OPTS)
+    _mstore = S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, prefix=AEF_PREFIX, client_options=S3_OPTS)
     _ds = xr.open_zarr(ObjectStore(_mstore, read_only=True), chunks=None, consolidated=False)
     _ti = {y: int(np.where(_ds.time.values == y)[0][0]) for y in AEF_YEARS_ALL}
+    # The mosaic is sharded (4096 px shards of 256 px chunks, 64 bands, int8):
+    # one read of a window fetches its chunks ONE AFTER ANOTHER, so a 9 km
+    # view took 31 s a year from the US East Coast (1.2 MB/s, 38 MB; zarr's
+    # async.concurrency made no difference). The window is read instead as
+    # its chunk-aligned blocks, all at once, through zarr's async API on this
+    # loop: 2.8 s for the same year (measured 2026-09-24, Wuhan, 16 blocks)
+    _memb = zarr.open_group(ObjectStore(_mstore, read_only=True), mode="r")["embeddings"]
+    _mb = int(_memb.chunks[-1])
+    _memb = _memb._async_array
+    _msem = asyncio.Semaphore(48)
+
+    async def _mosaic(ti, y0, y1, x0, x1):
+        """The mosaic's (64, y1 - y0, x1 - x0) int8 window for time index ti."""
+        out = np.empty((64, y1 - y0, x1 - x0), np.int8)
+
+        async def one(r0, r1, c0, c1):
+            async with _msem:
+                b = await _memb.getitem((ti, slice(None), slice(r0, r1), slice(c0, c1)))
+            out[:, r0 - y0:r1 - y0, c0 - x0:c1 - x0] = b
+
+        await asyncio.gather(*(
+            one(max(r, y0), min(r + _mb, y1), max(c, x0), min(c + _mb, x1))
+            for r in range(y0 // _mb * _mb, y1, _mb) for c in range(x0 // _mb * _mb, x1, _mb)
+        ))
+        return out
 
     os.makedirs(CACHE_DIR, exist_ok=True)
     _IDX, _PATHS, _CRS = {}, {}, {}
@@ -813,35 +879,38 @@ def _(
             return None
         async with _sem:
             ra = await ov.read(window=Window(col_off=c0, row_off=r0, width=c1 - c0, height=r1 - r0))
-        a = np.asarray(np.ma.filled(ra.as_masked(), AEF_NODATA)).reshape(64, r1 - r0, c1 - c0)
-        xs = t.c + (np.arange(c0, c1) + 0.5) * sx
-        ys = t.f + (np.arange(r0, r1) + 0.5) * sy
-        X, Y = np.meshgrid(xs, ys)
-        lon, lat = inv.transform(X, Y)
-        return a, lon, lat
+
+        def _place():
+            a = np.asarray(np.ma.filled(ra.as_masked(), AEF_NODATA)).reshape(64, r1 - r0, c1 - c0)
+            xs = t.c + (np.arange(c0, c1) + 0.5) * sx
+            ys = t.f + (np.arange(r0, r1) + 0.5) * sy
+            X, Y = np.meshgrid(xs, ys)
+            lon, lat = inv.transform(X, Y)
+            return a, lon, lat
+
+        return await cpu(_place)
 
     _DEQ = ", ".join(f"avg(signum(e{i:02d}) * power(e{i:02d} / 127.5, 2)) AS e{i:02d}" for i in range(64))
-    _fold_lock = asyncio.Lock()
+    _seq = itertools.count()  # a table name per fold: the years fold side by side on the CPU pool
 
-    async def _fold_rows(res, box, cols, lat, lon):
+    def _fold_rows_sync(res, box, cols, lat, lon):
         W_, S_, E_, N_ = box
+        name = f"aef_{next(_seq)}"
         ds1 = xr.Dataset(
             {f"e{i:02d}": (("i",), cols[i]) for i in range(64)} | {"lat": (("i",), lat), "lon": (("i",), lon)},
             coords={"i": np.arange(lat.size)},
         )
-        async with _fold_lock:
-            try:
-                ctx.deregister_table("aef")
-            except Exception:
-                pass
-            ctx.from_dataset("aef", ds1, chunks={"i": 262_144})
+        ctx.from_dataset(name, ds1, chunks={"i": 262_144})
+        try:
             return ctx.sql(f"""
                 SELECT h3_latlng_to_cell(lat, lon, CAST({res} AS INT)) AS cell, count(*) AS naef, {_DEQ}
-                FROM aef
+                FROM {name}
                 WHERE e00 != {AEF_NODATA}
                   AND lon >= {W_} AND lon < {E_} AND lat >= {S_} AND lat < {N_}
                 GROUP BY cell
             """).to_arrow_table()
+        finally:
+            ctx.deregister_table(name)
 
     async def aef_window(box, year):
         """The mosaic's native 10 m window under the box for one year:
@@ -851,10 +920,8 @@ def _(
         y0, y1 = int((AEF_Y0 - N_) / AEF_RES), int((AEF_Y0 - S_) / AEF_RES)
         if x1 <= x0 or y1 <= y0:
             return None
-        loop = asyncio.get_running_loop()
-        ti = _ti[year]
-        emb = await loop.run_in_executor(None, lambda: _ds.embeddings.isel(time=ti, y=slice(y0, y1), x=slice(x0, x1)).values)
-        return np.asarray(emb), AEF_X0 + x0 * AEF_RES, AEF_Y0 - y0 * AEF_RES, AEF_RES
+        emb = await _mosaic(_ti[year], y0, y1, x0, x1)
+        return emb, AEF_X0 + x0 * AEF_RES, AEF_Y0 - y0 * AEF_RES, AEF_RES
 
     async def aef_fold(box, res, year):
         """Mean AlphaEarth vector per res cell over the box for one year.
@@ -864,16 +931,16 @@ def _(
         if res >= MOSAIC_MIN_RES:
             x0, x1 = int((W_ - AEF_X0) / AEF_RES), int((E_ - AEF_X0) / AEF_RES)
             y0, y1 = int((AEF_Y0 - N_) / AEF_RES), int((AEF_Y0 - S_) / AEF_RES)
-            loop = asyncio.get_running_loop()
-            ti = _ti[year]
-            emb = await loop.run_in_executor(
-                None, lambda: _ds.embeddings.isel(time=ti, y=slice(y0, y1), x=slice(x0, x1)).values
-            )
+            emb = await _mosaic(_ti[year], y0, y1, x0, x1)
             lat = AEF_Y0 - (np.arange(y0, y1) + 0.5) * AEF_RES
             lon = AEF_X0 + (np.arange(x0, x1) + 0.5) * AEF_RES
-            LON, LAT = np.meshgrid(lon, lat)
             t1 = time.time()
-            out = await _fold_rows(res, box, emb.reshape(64, -1), LAT.ravel(), LON.ravel())
+
+            def _mosaic():
+                LON, LAT = np.meshgrid(lon, lat)
+                return _fold_rows_sync(res, box, emb.reshape(64, -1), LAT.ravel(), LON.ravel())
+
+            out = await cpu(_mosaic)
             return out, f"AEF {year} mosaic {t1 - t0:.1f} s · fold {out.num_rows:,} {time.time() - t1:.1f} s"
         li = AEF_LEVEL_FOR_RES[res]
         ix = _IDX[year]
@@ -888,13 +955,17 @@ def _(
         parts = [p for p in parts if p is not None]
         if not parts:
             return None, f"AEF {year}: nothing read"
-        cols = np.concatenate([p[0].reshape(64, -1) for p in parts], axis=1)
-        lon = np.concatenate([p[1].ravel() for p in parts])
-        lat = np.concatenate([p[2].ravel() for p in parts])
         t1 = time.time()
-        out = await _fold_rows(res, box, cols, lat, lon)
+
+        def _cogs():
+            cols = np.concatenate([p[0].reshape(64, -1) for p in parts], axis=1)
+            lon = np.concatenate([p[1].ravel() for p in parts])
+            lat = np.concatenate([p[2].ravel() for p in parts])
+            return _fold_rows_sync(res, box, cols, lat, lon), cols.shape[1]
+
+        out, npx = await cpu(_cogs)
         return out, (
-            f"AEF {year} ov{li} ({10 * 2 ** (li + 1)} m) {len(parts)} files {cols.shape[1] / 1e6:.2f} Mpx "
+            f"AEF {year} ov{li} ({10 * 2 ** (li + 1)} m) {len(parts)} files {npx / 1e6:.2f} Mpx "
             f"{t1 - t0:.1f} s · fold {out.num_rows:,} {time.time() - t1:.1f} s"
         )
 
@@ -914,8 +985,10 @@ def _(
     S2_TCI_MAX_Z,
     S2_TILE_MIN_Z,
     S3Store,
+    S3_OPTS,
     Window,
     asyncio,
+    cpu,
     io,
     json,
     math,
@@ -931,7 +1004,7 @@ def _(
     # constrain these items, so it is enforced on the id. The yearly footprints
     # come first, then the same year's S2_FILL_COLLECTION footprints (ids
     # suffixed `#fill`): first-to-paint-wins is the backfill.
-    _store = S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True)
+    _store = S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, client_options=S3_OPTS)
     _R = 6378137.0
     _items = {}  # item id -> {tci: path, bbox}
     _boxes = {}  # (year, rounded box) -> item ids
@@ -944,17 +1017,19 @@ def _(
     _tstat = {"served": 0, "blank": 0, "ms": 0.0}
     _fill = {}  # year -> [pixels painted by the fill collection, pixels painted]
 
-    def _encode(key, out):
+    def _png_of(out, g):
         """The gamma (the header's `gamma`) on the composited bytes, then PNG:
         v -> 255 (v / 255) ** (1 / gamma), a lift of the midtones that keeps
-        the bright end unclipped (a gain clipped it)."""
-        g = _gain["v"]
+        the bright end unclipped (a gain clipped it). Pure: runs on the pool."""
         if g not in _LUT:
             _LUT[g] = (255.0 * (np.arange(256, dtype=np.float64) / 255.0) ** (1.0 / g)).round().astype(np.uint8)
         rgba = out if g == 1.0 else np.concatenate([_LUT[g][out[..., :3]], out[..., 3:]], axis=2)
         buf = io.BytesIO()
         Image.fromarray(np.ascontiguousarray(rgba), mode="RGBA").save(buf, format="PNG")
-        _png[key] = buf.getvalue()
+        return buf.getvalue()
+
+    async def _encode(key, out):
+        _png[key] = await cpu(_png_of, out, key[-1])
         if len(_png) > 6000:
             _png.pop(next(iter(_png)))
         return _png[key]
@@ -1037,7 +1112,7 @@ def _(
         if (year, z, x, y) in _arr:
             # composited already at another scale: re-encode, no read
             out = _arr[(year, z, x, y)]
-            return _encode(key, out) if out is not None else None
+            return (await _encode(key, out)) if out is not None else None
         if z < S2_TILE_MIN_Z or z > S2_TCI_MAX_Z:
             _tstat["blank"] += 1
             return None
@@ -1053,12 +1128,13 @@ def _(
         tx0, ty1 = -world / 2 + x * world / n, world / 2 - y * world / n
         xs = tx0 + (np.arange(T) + 0.5) * tpx
         ys = ty1 - (np.arange(T) + 0.5) * tpx
-        out = np.zeros((T, T, 4), np.uint8)
         li = min(S2_TCI_MAX_Z - z, S2_TCI_MAX_Z - S2_PYRAMID_Z)  # L5 (306 m) below z9: decimated
-        for iid in ids:
+
+        async def _read(iid):
+            """One footprint's window under the tile: (ra, c0, r0, h, w, px, L, Tt) or None."""
             g = await _get(_items[iid]["tci"])
             if g is None:
-                continue
+                return None
             lv = [g, *g.overviews][li]
             L, _B, R_, Tt = g.bounds
             H, W = lv.shape
@@ -1066,19 +1142,37 @@ def _(
             c0, c1 = max(0, int(math.floor((tx0 - L) / px))), min(W, int(math.ceil((tx0 + T * tpx - L) / px)))
             r0, r1 = max(0, int(math.floor((Tt - ty1) / px))), min(H, int(math.ceil((Tt - (ty1 - T * tpx)) / px)))
             if c1 <= c0 or r1 <= r0:
-                continue
+                return None
             async with _sem:
                 ra = await lv.read(window=Window(col_off=c0, row_off=r0, width=c1 - c0, height=r1 - r0))
-            a = np.asarray(np.ma.filled(ra.as_masked(), 0)).reshape(-1, r1 - r0, c1 - c0)[:3]
-            cols = np.floor((xs - (L + c0 * px)) / px).astype(np.int64)
-            rows = np.floor(((Tt - r0 * px) - ys) / px).astype(np.int64)
-            okc, okr = (cols >= 0) & (cols < c1 - c0), (rows >= 0) & (rows < r1 - r0)
-            rgb = a[:, np.clip(rows, 0, r1 - r0 - 1)[:, None], np.clip(cols, 0, c1 - c0 - 1)[None, :]].transpose(1, 2, 0)
-            valid = okr[:, None] & okc[None, :] & (rgb.sum(2) > 0) & (out[..., 3] == 0)
-            out[valid, :3] = rgb[valid]
-            out[valid, 3] = 255
-            n_new = int(valid.sum())
-            fy = _fill.setdefault(year, [0, 0])
+            return ra, c0, r0, r1 - r0, c1 - c0, px, L, Tt
+
+        # all the footprints at once (the round trips overlap), painted in
+        # their order after (first to paint a pixel wins, yearly before fill)
+        reads = await asyncio.gather(*(_read(i) for i in ids))
+
+        def _composite():
+            out = np.zeros((T, T, 4), np.uint8)
+            painted = []
+            for rd in reads:
+                if rd is None:
+                    painted.append(0)
+                    continue
+                ra, c0, r0, h, w, px, L, Tt = rd
+                a = np.asarray(np.ma.filled(ra.as_masked(), 0)).reshape(-1, h, w)[:3]
+                cols = np.floor((xs - (L + c0 * px)) / px).astype(np.int64)
+                rows = np.floor(((Tt - r0 * px) - ys) / px).astype(np.int64)
+                okc, okr = (cols >= 0) & (cols < w), (rows >= 0) & (rows < h)
+                rgb = a[:, np.clip(rows, 0, h - 1)[:, None], np.clip(cols, 0, w - 1)[None, :]].transpose(1, 2, 0)
+                valid = okr[:, None] & okc[None, :] & (rgb.sum(2) > 0) & (out[..., 3] == 0)
+                out[valid, :3] = rgb[valid]
+                out[valid, 3] = 255
+                painted.append(int(valid.sum()))
+            return out, painted
+
+        out, painted = await cpu(_composite)
+        fy = _fill.setdefault(year, [0, 0])
+        for iid, n_new in zip(ids, painted):
             fy[1] += n_new
             if _items[iid].get("fill"):
                 fy[0] += n_new
@@ -1090,7 +1184,7 @@ def _(
         _arr[(year, z, x, y)] = out
         if len(_arr) > 2000:
             _arr.pop(next(iter(_arr)))
-        png = _encode(key, out)
+        png = await _encode(key, out)
         _tstat["served"] += 1
         _tstat["ms"] += 1000 * (time.time() - t0)
         return png
@@ -1251,6 +1345,11 @@ def _(
                         except Exception:
                             c.execute(f"INSTALL {ext}; LOAD {ext}")
                     c.execute("SET GLOBAL s3_region='us-west-2'; SET GLOBAL enable_object_cache=true")
+                    # the stalls S3_OPTS cuts short, on DuckDB's own client: a
+                    # socket timeout (no bytes for 6 s), not a cap on a long read,
+                    # and a flat retry (the default backoff of 4 waits 25.6 s by
+                    # the fifth try: a 2-row-group, 7 MB read took 90 s)
+                    c.execute("SET GLOBAL http_timeout=6; SET GLOBAL http_retries=5; SET GLOBAL http_retry_backoff=1.5; SET GLOBAL http_retry_wait_ms=200")
                     _dv["con"] = c
                 except Exception as e:
                     _dv["err"] = e
@@ -1283,6 +1382,34 @@ def _(
             LIMIT {BLD_MAX + 1}
         """
         return _cur().execute(q).arrow().read_all()
+
+    def bld_geoarrow(rows):
+        """The footprints as Arrow IPC stream bytes: one record batch, one
+        column `geometry`, native GeoArrow (geoarrow.polygon, or
+        geoarrow.multipolygon when any footprint is multi-part), interleaved
+        float64 xy. Row i is footprint i (the order of `rows`, which `bcolors`
+        follows). Anything not polygonal becomes an empty polygon so the rows
+        stay aligned."""
+        if rows.num_rows == 0:
+            return b""
+        geoms = shapely.from_wkb(rows["wkb"].to_numpy(zero_copy_only=False))
+        tid = shapely.get_type_id(geoms)
+        bad = (tid != 3) & (tid != 6)
+        if bad.any():
+            geoms = geoms.copy()
+            geoms[bad] = shapely.Polygon()
+        gtype, coords, offs = shapely.to_ragged_array(geoms, include_z=False)
+        xy_t = pa.list_(pa.field("xy", pa.float64(), nullable=False), 2)
+        arr = pa.FixedSizeListArray.from_arrays(pa.array(coords.ravel()), type=xy_t)
+        for name, o in zip(("vertices", "rings", "polygons"), offs):
+            arr = pa.ListArray.from_arrays(pa.array(o, pa.int32()), arr, type=pa.list_(pa.field(name, arr.type, nullable=False)))
+        ext = "geoarrow.multipolygon" if gtype == shapely.GeometryType.MULTIPOLYGON else "geoarrow.polygon"
+        field = pa.field("geometry", arr.type, metadata={"ARROW:extension:name": ext, "ARROW:extension:metadata": '{"crs":"OGC:CRS84"}'})
+        tbl = pa.Table.from_arrays([arr], schema=pa.schema([field]))
+        sink = pa.BufferOutputStream()
+        with pa.ipc.new_stream(sink, tbl.schema) as w:
+            w.write_batch(tbl.combine_chunks().to_batches()[0])
+        return sink.getvalue().to_pybytes()
 
     def bld_cover(rows, shape, lon0, lat0, px):
         """int32 (h, w) on the WSF window's grid (lon0, lat0 its north-west
@@ -1354,7 +1481,7 @@ def _(
             pass
 
     _th.Thread(target=_warm, daemon=True).start()
-    return OV_BLD_PM, OV_DIV_PM, OV_RELEASE, OV_RELEASE_HOW, bld_cover, bld_rows, division_at
+    return OV_BLD_PM, OV_DIV_PM, OV_RELEASE, OV_RELEASE_HOW, bld_cover, bld_geoarrow, bld_rows, division_at
 
 
 @app.cell
@@ -1582,8 +1709,8 @@ def _(anywidget, asyncio, traitlets):
         raster (the pyramid, one colour per year of first detection), the H3
         hexagons (WSF / AlphaEarth fills, the year window), the S2 mosaic.
 
-        Kernel -> browser: `polys` (the footprints as one GeoJSON
-        FeatureCollection, utf-8 bytes, feature `i` = row) with `bcolors`
+        Kernel -> browser: `polys` (the footprints as an Arrow IPC stream,
+        one batch, a native GeoArrow polygon column, row = footprint) with `bcolors`
         (rgba u8 per footprint, swapped per fill without resending the
         polygons); `cells` (uint64 LE) with `colors` (rgba u8) for the
         hexagons; `config` (JSON); `status` / `panel` / `legend` (strings for
@@ -1637,9 +1764,11 @@ def _(anywidget, asyncio, traitlets):
         _esm = r"""
         import maplibregl from "https://esm.sh/maplibre-gl@5.24.0";
         import {MapboxOverlay} from "https://esm.sh/@deck.gl/mapbox@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
-        import {BitmapLayer, PathLayer, GeoJsonLayer} from "https://esm.sh/@deck.gl/layers@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
+        import {BitmapLayer, PathLayer} from "https://esm.sh/@deck.gl/layers@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {TileLayer, H3HexagonLayer} from "https://esm.sh/@deck.gl/geo-layers@9.3.10?deps=@deck.gl/core@9.3.10,@deck.gl/extensions@9.3.10,@deck.gl/layers@9.3.10,@deck.gl/mesh-layers@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {ClipExtension} from "https://esm.sh/@deck.gl/extensions@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
+        import * as arrow from "https://esm.sh/apache-arrow@18.1.0";
+        import {GeoArrowPolygonLayer} from "https://esm.sh/@geoarrow/deck.gl-layers@0.3.2?deps=@deck.gl/core@9.3.10,@deck.gl/layers@9.3.10,@deck.gl/geo-layers@9.3.10,@deck.gl/aggregation-layers@9.3.10,@deck.gl/extensions@9.3.10,@deck.gl/mesh-layers@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {latLngToCell, getResolution, cellToBoundary} from "https://esm.sh/h3-js@4.5.0";
         import {Protocol as PMProtocol} from "https://esm.sh/pmtiles@4.5.0";
         maplibregl.addProtocol("pmtiles", new PMProtocol().tile);
@@ -1708,7 +1837,7 @@ def _(anywidget, asyncio, traitlets):
           legend.style.cssText = "display:flex;flex-wrap:wrap;gap:.3rem .9rem;align-items:center;font-size:14px";
           const panel = document.createElement("div");
           panel.className = "sp-panel";
-          panel.style.cssText = "font-size:14px;max-width:80ch;line-height:1.45";
+          panel.style.cssText = "font-size:14px;max-width:110ch;line-height:1.45";
           strip.append(legend, panel, status);
           status.hidden = !!cfg.minimal;
           root.append(pane, strip);
@@ -1974,7 +2103,21 @@ def _(anywidget, asyncio, traitlets):
           // "full screen in the window" (Stephen, 2026-09-24): the widget pinned
           // over the page, not the OS full screen (that stays on the map's button)
           let fit = false;
+          // marimo's own buttons (the notebook "..." menu marimo run pins to the
+          // top right; in edit mode the cell "..." actions, drag, expand) float
+          // over the map's top-right controls while the widget fills the
+          // window (Stephen, 2026-09-24: "can you hide this button"); a page
+          // style, on only while fit is on
+          const FIT_CLS = "sp-fit-on";
+          if (!document.getElementById("sp-fit-style")) {
+            const st = document.createElement("style");
+            st.id = "sp-fit-style";
+            st.textContent = ["notebook-actions-dropdown", "cell-actions-button", "drag-button", "expand-output-button", "fullscreen-output-button"]
+              .map((t) => "html." + FIT_CLS + " [data-testid='" + t + "']").join(",") + "{display:none!important}";
+            document.head.appendChild(st);
+          }
           const paneHeight = () => {
+            document.documentElement.classList.toggle(FIT_CLS, fit && !isFull());
             const full = isFull() || fit;
             root.style.position = fit && !isFull() ? "fixed" : (full ? "relative" : "");
             root.style.inset = fit && !isFull() ? "0" : "";
@@ -1983,7 +2126,7 @@ def _(anywidget, asyncio, traitlets):
             root.style.boxSizing = "border-box";
             pane.style.height = full ? "100vh" : (cfg.height || 720) + "px";
             strip.style.cssText = full
-              ? stripCss + ";position:absolute;left:0;right:0;bottom:0;z-index:30;background:#fff;border-top:1px solid rgba(29,29,27,.18);max-height:40vh;overflow-y:auto;box-sizing:border-box"
+              ? stripCss + ";position:absolute;left:0;right:0;bottom:0;z-index:30;background:rgba(255,255,255,.8);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);border-top:1px solid rgba(29,29,27,.18);max-height:40vh;overflow-y:auto;box-sizing:border-box"
               : stripCss;
             styleAef();
             setTimeout(() => { if (map) map.resize(); }, 30);
@@ -2095,18 +2238,31 @@ def _(anywidget, asyncio, traitlets):
             colors = c8 && c8.byteLength === N * 4 ? new Uint8Array(c8) : null;
             dataObj = N && colors ? {length: N} : null;
           }
-          let polys = null, bcolors = null, polysSeq = 0;
+          // the footprints: a GeoArrow table (one batch) and their fill as an
+          // arrow FixedSizeList<u8, 4> vector over the same rows, rebuilt only
+          // when either arrives, so a camera move never touches them
+          let polys = null, bcolors = null, bvec = null, polysSeq = 0;
+          const RGBA = new arrow.FixedSizeList(4, new arrow.Field("rgba", new arrow.Uint8(), false));
+          const mkBVec = () => {
+            const n = polys ? polys.numRows : 0;
+            bvec = n && bcolors && bcolors.length === 4 * n
+              ? arrow.makeVector(arrow.makeData({type: RGBA, length: n, nullCount: 0,
+                  child: arrow.makeData({type: new arrow.Uint8(), length: 4 * n, nullCount: 0, data: bcolors})}))
+              : null;
+          };
           const loadPolys = () => {
             const u8 = bytesOf(model.get("polys"));
             polysSeq++;
-            if (!u8 || !u8.length) { polys = null; update(); return; }
-            try { polys = JSON.parse(new TextDecoder().decode(u8)); } catch (e) { polys = null; say("footprints: " + e.message); }
-            update();
+            polys = null;
+            if (u8 && u8.length) {
+              try { polys = arrow.tableFromIPC(new Uint8Array(copyOf(u8))); } catch (e) { say("footprints: " + e.message); }
+            }
+            mkBVec(); update();
           };
           const loadBColors = () => {
             const u8 = bytesOf(model.get("bcolors"));
             bcolors = u8 && u8.length ? new Uint8Array(copyOf(u8)) : null;
-            update();
+            mkBVec(); update();
           };
 
           // ---- tiles: ask the kernel ------------------------------------------
@@ -2182,7 +2338,7 @@ def _(anywidget, asyncio, traitlets):
             },
           });
           const hexZoomOk = () => !!map && map.getZoom() >= (cfg.hex_zoom || 9);
-          const bldZoomOk = () => !!map && map.getZoom() >= (cfg.bld_zoom || 14);
+          const bldZoomOk = () => !!map && map.getZoom() >= (cfg.bld_zoom || 13);
           const swipeLon = () => {
             if (!map) return null;
             const w = mapEl.clientWidth, h = mapEl.clientHeight;
@@ -2212,15 +2368,15 @@ def _(anywidget, asyncio, traitlets):
               filled: true, stroked: false, extruded: false, highPrecision: true, pickable: false, beforeId: slot(),
             }));
             out.push(mkRaster("wsf", 0, 14, cfg.extent || null, !!on.wsf, clipTo("right")));
-            const bld = on.bld && bldZoomOk() && polys && bcolors && bcolors.length === 4 * polys.features.length;
+            const bld = on.bld && bldZoomOk() && polys && bvec;
             // the footprints span both sides of the swipe: the photo is what a
             // footprint is checked against (Stephen, 2026-09-24)
-            if (bld) out.push(new GeoJsonLayer({
+            if (bld) out.push(new GeoArrowPolygonLayer({
               id: "footprints-" + polysSeq, data: polys, filled: true, stroked: true,
-              getFillColor: (f) => { const i = 4 * f.properties.i; return [bcolors[i], bcolors[i + 1], bcolors[i + 2], bcolors[i + 3]]; },
+              getFillColor: bvec,
               getLineColor: cfg.bld_stroke || [255, 214, 120, 230],
               lineWidthUnits: "pixels", getLineWidth: 1.0, lineWidthMinPixels: 0.8,
-              updateTriggers: {getFillColor: [bcolors]}, pickable: false, beforeId: slot(),
+              pickable: false, beforeId: slot(),
             }));
             const h = on.hex ? outline("hover", hover, [255, 255, 255, 255], 2) : null;
             if (h) out.push(h);
@@ -2246,7 +2402,7 @@ def _(anywidget, asyncio, traitlets):
             v.n = ++seq;
             model.set("view", JSON.stringify(v));
             model.save_changes();
-            if (on.bld && v.zoom >= (cfg.bld_zoom || 14)) say("reading footprints…");
+            if (on.bld && v.zoom >= (cfg.bld_zoom || 13)) say("reading footprints…");
             else if (on.hex && v.zoom >= (cfg.hex_zoom || 9)) say("folding hexagons…");
           }
           const cellAt = (lngLat) => {
@@ -2281,7 +2437,7 @@ def _(anywidget, asyncio, traitlets):
             new ResizeObserver(() => { try { map.resize(); } catch (e) {} }).observe(mapEl);
             window.__spTiles = tstat;
             window.__spMaps = () => [map];
-            window.__spLayers = () => ({right: layers().filter((l) => l.props.visible !== false).map((l) => l.id), N, res, on: Object.assign({}, on), polys: polys ? polys.features.length : 0});
+            window.__spLayers = () => ({right: layers().filter((l) => l.props.visible !== false).map((l) => l.id), N, res, on: Object.assign({}, on), polys: polys ? polys.numRows : 0});
           }
           let pendingLoad = null, needCells = false;
           const flush = () => {
@@ -2307,7 +2463,7 @@ def _(anywidget, asyncio, traitlets):
           });
           try { grab("cells"); grab("colors"); loadCells(); loadAttrs(); renderLegend(); say(model.get("status")); boot(); loadPolys(); loadBColors(); }
           catch (e) { say("boot: " + e.message); console.error(e); }
-          return () => { try { map && map.remove(); } catch (e) {} };
+          return () => { document.documentElement.classList.remove(FIT_CLS); try { map && map.remove(); } catch (e) {} };
         }
         export default {render};
         """
@@ -2405,10 +2561,12 @@ def _(
     aef_window,
     asyncio,
     bld_cover,
+    bld_geoarrow,
     bld_rows,
     build_frame,
     con,
     contains,
+    cpu,
     division_at,
     json,
     np,
@@ -2556,8 +2714,7 @@ def _(
                 return
             aef_by_year = {y: HOLD["aef"][(y, bkey)][0] for y in years if (y, bkey) in HOLD["aef"]}
             t1 = time.time()
-            loop = asyncio.get_running_loop()
-            fr = await loop.run_in_executor(None, build_frame, nw, aef_by_year, y0, y1)
+            fr = await cpu(build_frame, nw, aef_by_year, y0, y1)
             stats = f"res {res} · {s1} · frame {time.time() - t1:.1f} s"
             HOLD["memo"][key] = (fr, stats)
             if len(HOLD["memo"]) > 12:
@@ -2607,7 +2764,7 @@ def _(
             w0 = next(w for w in wins if w is not None)
             _, lon0, lat0, px = w0
             shape = w0[0].shape[1:]
-            coverA = await asyncio.to_thread(bld_cover, b["rows"], shape, lon0, lat0, px)
+            coverA = await cpu(bld_cover, b["rows"], shape, lon0, lat0, px)
             flat = coverA.ravel()
 
             def _means(emb):
@@ -2626,7 +2783,7 @@ def _(
                 V[(cnt == 0) | (nrm == 0)] = np.nan
                 return V
 
-            Vs = await asyncio.to_thread(lambda: [_means(w[0]) for w in wins if w is not None])
+            Vs = await cpu(lambda: [_means(w[0]) for w in wins if w is not None])
             steps = np.full((len(years) - 1, n), np.nan, np.float32)
             for k in range(len(years) - 1):
                 steps[k] = (1.0 - np.einsum("ij,ij->i", Vs[k], Vs[k + 1])).astype(np.float32)
@@ -2760,7 +2917,9 @@ def _(
         psz = WSF_RES
         lon0, lat0 = float(lon[0]) - psz / 2, float(lat[0]) + psz / 2
         n_fp = rows.num_rows
-        cover = await asyncio.to_thread(bld_cover, rows, arr.shape, lon0, lat0, psz)
+        # the rasterizing (for the counts) and the GeoArrow encoding (for the
+        # browser) need only the rows: side by side on the CPU pool
+        cover, gj = await asyncio.gather(cpu(bld_cover, rows, arr.shape, lon0, lat0, psz), cpu(bld_geoarrow, rows))
         flat, aflat = cover.ravel(), arr.ravel()
         built_m = aflat > 0
         npx = np.bincount(flat, minlength=n_fp + 1)[1:]
@@ -2772,10 +2931,6 @@ def _(
             idx, val = idx[o], val[o]
             keep = (idx > 0) & np.r_[True, idx[1:] != idx[:-1]]
             first[idx[keep] - 1] = val[keep]
-        import shapely
-        geoms = shapely.from_wkb(rows["wkb"].to_numpy(zero_copy_only=False)) if n_fp else []
-        feats = ",".join(f'{{"type":"Feature","properties":{{"i":{i}}},"geometry":{shapely.to_geojson(g)}}}' for i, g in enumerate(geoms))
-        gj = ('{"type":"FeatureCollection","features":[' + feats + "]}").encode()
         n_built_px = int(built_m.sum())
         n_gap_px = int((built_m & (flat == 0)).sum())
         n_never = int((built == 0).sum())
@@ -2794,7 +2949,7 @@ def _(
             + (f" ({by_ds})" if by_ds else "")
             + f" · {n_never:,} of them WSF has never read as built-up"
             + f" · WSF built-up pixels {n_built_px:,}, {100 * n_gap_px / max(1, n_built_px):.0f}% under no footprint"
-            + f" · read {t1 - t0:.1f} s, {len(gj) / 1e6:.1f} MB of polygons, {time.time() - t1:.1f} s"
+            + f" · read {t1 - t0:.1f} s, {len(gj) / 1e6:.1f} MB of GeoArrow, {time.time() - t1:.1f} s"
         )
         _bld_paint()
 
@@ -2810,10 +2965,12 @@ def _(
         if not want_bld:
             _cover_off()
             HOLD["bld_status"] = f"footprints from zoom {BLD_ZOOM:g} (now {z:.1f})" if on.get("bld") else ""
-        if want_bld:
-            await _serve_bld(vsd, force)
-        if want_hex:
-            await _serve_hex(vsd, force)
+        # the footprints and the hexagons are independent: served side by side,
+        # so the hexagons no longer wait on the Overture read
+        await asyncio.gather(
+            _serve_bld(vsd, force) if want_bld else asyncio.sleep(0),
+            _serve_hex(vsd, force) if want_hex else asyncio.sleep(0),
+        )
         _legend()
         _status()
 
@@ -3136,7 +3293,7 @@ def _(mo):
     The second table crosses the two year fills and counts how many hexagons
     WSF and AlphaEarth place in the same year.
 
-    With the buildings on and the zoom past 14, the button also lists the
+    With the buildings on and the zoom past 13, the button also lists the
     Overture footprints under the view, one row each: `id`, `dataset` and
     `updated` (the source and the date it last touched the footprint),
     `subtype`, `class`, `height`, `num_floors`, `px` (WSF pixels the

@@ -37,7 +37,7 @@ colours.
 
 `s2-wsf-aef-overture-slider.py` turns the pair inside out: one map, and the
 [Overture Maps buildings](https://docs.overturemaps.org/guides/buildings/)
-are the subject. From zoom 14 every footprint is drawn from Overture's pinned
+are the subject. From zoom 13 every footprint is drawn from Overture's pinned
 release and coloured by one thing at a time: the year WSF first read the
 ground under it as built-up, the first year its own AlphaEarth fingerprint
 jumped, or the dataset that drew it. Under the footprints, layers you switch
@@ -74,7 +74,7 @@ Everything is read live from [Source Cooperative](https://source.coop).
 | Sentinel-2 yearly mosaics (true colour, 2022 to 2025) | Earth Genome, from Copernicus Sentinel data | [earthgenome/sentinel2-yearly-mosaics](https://source.coop/earthgenome/sentinel2-yearly-mosaics), via the [Earth Genome STAC](https://stac.earthgenome.org) | CC BY 4.0 |
 | Sentinel-2 temporal mosaics (fills nodata holes in the yearly) | Earth Genome, from Copernicus Sentinel data | [earthgenome/sentinel2-temporal-mosaics](https://source.coop/earthgenome/sentinel2-temporal-mosaics) | CC BY 4.0 |
 | World Settlement Footprint (WSF) Tracker, 10 m, 2016 to 2026 | DLR and MindEarth | [mindearth/wsf](https://source.coop/mindearth/wsf) ([DOI 10.5281/zenodo.20424537](https://doi.org/10.5281/zenodo.20424537)) | CC BY 3.0 IGO |
-| AlphaEarth Foundations Satellite Embedding, annual, 2017 to 2025 | Google and Google DeepMind ([dataset page](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)) | [tge-labs/aef](https://source.coop/tge-labs/aef) (index) and [tge-labs/aef-mosaic](https://source.coop/tge-labs/aef-mosaic) (COG overviews) | CC BY 4.0 |
+| AlphaEarth Foundations Satellite Embedding, annual, 2017 to 2025 | Google and Google DeepMind ([dataset page](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)) | [tge-labs/aef](https://source.coop/tge-labs/aef) (COGs with overviews and their index, read below H3 res 11) and [tge-labs/aef-mosaic](https://source.coop/tge-labs/aef-mosaic) (one global sharded zarr at 10 m, read from res 11) | CC BY 4.0 |
 | Overture Maps divisions (PMTiles, regions and counties) | Overture Maps Foundation | [cboettig/overturemaps](https://source.coop/cboettig/overturemaps) | ODbL |
 | Overture Maps buildings and divisions (the slider: GeoParquet and PMTiles from a pinned release) | Overture Maps Foundation | [Overture's own release bucket](https://docs.overturemaps.org/getting-data/) | ODbL |
 | Overture Maps divisions (GeoParquet, point-in-polygon on click) | Overture Maps Foundation | [fused/overture](https://source.coop/fused/overture) | ODbL |
