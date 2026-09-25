@@ -1564,7 +1564,7 @@ def _(anywidget, asyncio, traitlets):
               updateTriggers: {getFillColor: [hexSeq], getHexagon: [hexSeq]},
               filled: true, stroked: false, extruded: false, highPrecision: true, pickable: false, beforeId: slot(),
             }));
-            const hv = hover != null && hover >= 0 ? outline("hover", hexes[hover], [24, 32, 40, 200], 1.5) : null;
+            const hv = hover != null && hover >= 0 ? outline("hover", hexes[hover], [255, 255, 255, 235], 2) : null;
             if (hv) out.push(hv);
             const pk = picked ? outline("picked", picked, [255, 255, 255, 255], 3) : null;
             if (pk) out.push(pk);
