@@ -5,7 +5,7 @@
 #     "datafusion>=54.0.0",
 #     "xarray-sql>=0.3.3",
 #     "xarray",
-#     "zarr>=3",
+#     "zarr>=3.1",
 #     "h3ronpy>=0.22.0",
 #     "pyarrow>=25.0.0",
 #     "obstore>=0.9.2",

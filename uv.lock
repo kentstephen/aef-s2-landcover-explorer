@@ -50,7 +50,7 @@ requires-dist = [
     { name = "shapely", specifier = ">=2.0" },
     { name = "xarray" },
     { name = "xarray-sql", specifier = ">=0.3.3" },
-    { name = "zarr", specifier = ">=3" },
+    { name = "zarr", specifier = ">=3.1" },
 ]
 
 [[package]]

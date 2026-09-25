@@ -8,3 +8,6 @@ Running in a sandbox: /opt/homebrew/bin/uv run --isolated --no-project --compile
   warnings.warn(
 /Users/stephenk/.cache/uv/archive-v0/k6joCZzNKvLqEnGy/lib/python3.13/site-packages/zarr/core/group.py:3413: ZarrUserWarning: Object at README.md is not recognized as a component of a Zarr hierarchy.
   warnings.warn(
+
+        Thanks for using marimo! 🌊🍃
+
