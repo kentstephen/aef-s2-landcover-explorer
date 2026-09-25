@@ -1,5 +1,5 @@
 [project]
-name = "aef-landcover-settlements"
+name = "aef-s2-landcover-explorer"
 version = "0.1.0"
 description = "AlphaEarth embeddings read against Overture landcover and WSF settlements."
 readme = "README.md"

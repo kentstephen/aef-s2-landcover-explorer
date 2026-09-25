@@ -1,6 +1,6 @@
-# AEF, landcover and settlements
+# AEF, Sentinel-2 and landcover explorer
 
-[![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-landcover-settlements/blob/main/aef-landcover-settlements.py)
+[![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py)
 
 AlphaEarth Foundations embeddings read against two independent records of
 what is on the ground: Overture Maps landcover and the World Settlement
@@ -24,7 +24,7 @@ and narrows the sources to these.
 
 ## The notebook
 
-`aef-landcover-settlements.py`: AlphaEarth change hexagons in viridis (how
+`aef-s2-landcover-explorer.py`: AlphaEarth change hexagons in viridis (how
 much the ground changed over the years read, or, in YlOrBr, the year its
 change stood out most against that year's usual change in view), ESA
 WorldCover 2021 class shares per hexagon, and the Earth Genome Sentinel-2
@@ -34,12 +34,12 @@ year. Click a hexagon for its year-to-year steps, its land cover and the
 Overture divisions it sits in. Keys: `S` how much, `D` year, `X` fill the
 window.
 
-[Open it in molab](https://molab.marimo.io/github/github.com/kentstephen/aef-landcover-settlements/blob/main/aef-landcover-settlements.py): it runs in the same region as the data, where
+[Open it in molab](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py): it runs in the same region as the data, where
 the AlphaEarth reads are several times faster. Locally (dependencies are
 declared inline, PEP 723):
 
 ```
-uv run marimo run aef-landcover-settlements.py --sandbox
+uv run marimo run aef-s2-landcover-explorer.py --sandbox
 ```
 
 ## Carried over

@@ -44,9 +44,9 @@ The readers (AlphaEarth COGs and mosaic, the S2 tiles) and the atlas's face
 are carried over from s2-wsf-aef-overture-atlas.py. WSF and Overture
 buildings are out for now.
 
-Run: uv run marimo run aef-landcover-settlements.py --sandbox (it fills the window;
+Run: uv run marimo run aef-s2-landcover-explorer.py --sandbox (it fills the window;
 X or Esc gives the notebook back)
-molab: https://molab.marimo.io/github/github.com/kentstephen/aef-landcover-settlements/blob/main/aef-landcover-settlements.py
+molab: https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py
 
 Attribution: "The AlphaEarth Foundations Satellite Embedding dataset is
 produced by Google and Google DeepMind" (CC BY 4.0). ESA WorldCover 10 m
@@ -155,9 +155,9 @@ def _(mo):
     hexagons again. **Click** a hexagon for its account and its land cover.
     `X` fills the window.
 
-    [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-landcover-settlements/blob/main/aef-landcover-settlements.py)
+    [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py)
     <small>molab runs in the same region as the data and is the faster place to open this notebook.
-    Locally: `uv run marimo run aef-landcover-settlements.py --sandbox`</small>
+    Locally: `uv run marimo run aef-s2-landcover-explorer.py --sandbox`</small>
     """)
     return
 
@@ -2351,6 +2351,47 @@ def _(
     else:
         HOLD["sent"] = None
         _paint()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## How it works
+
+    **AlphaEarth, folded to H3.** Every 10 m pixel of the AlphaEarth
+    Foundations embedding is 64 numbers describing the ground for one year.
+    For the view on screen, the notebook reads each year in the window
+    (2021 to 2025 by default, 2017 to 2025 available) from Source
+    Cooperative: the COG overviews at coarser hexagons, the zarr mosaic
+    from res 11 in. Each pixel's lon/lat goes through an h3ronpy UDF inside
+    DataFusion (via xarray-sql), and the pixels are averaged per hexagon,
+    one fold per year. The hexagon size follows the zoom.
+
+    **How much it changed (viridis).** Each hexagon's yearly vector is
+    normalised, and `disp` is 1 minus the cosine between the window's first
+    and last year: 0 means the fingerprint did not move. The fill stretches
+    `disp` to this view's 2nd to 98th percentile, so the colours rank the
+    hexagons against their neighbours, not against the world.
+
+    **When it changed (YlOrBr, `D`).** Every year-to-year step is scored
+    the same way. The embeddings drift as a whole between some years (over
+    Lagos the 2024 to 2025 median step is about twice the others), so the
+    raw biggest step would land on 2025 almost everywhere. Each step is
+    divided by that year's median step in view instead, and the change year
+    is the step that stands out most. The card on a clicked hexagon shows
+    those ratios against 1.
+
+    **What is there (ESA WorldCover 2021).** The same fold, on the class
+    raster read straight from ESA's bucket: a count of pixels per class per
+    hexagon, shown as shares. It is one year only, so it describes the
+    ground; it does not date anything.
+
+    **What happened (Sentinel-2).** Holding the map swaps the hexagons for
+    Earth Genome's yearly true-colour mosaic, 2022 to 2025, so the change
+    the hexagons point to can be checked against the imagery. Nothing
+    coloured is drawn over it.
+    """)
     return
 
 
