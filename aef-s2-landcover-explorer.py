@@ -268,7 +268,7 @@ def _(os, tempfile):
     # hexagons from zoom 7, where the imagery also starts (Stephen, 2026-09-25:
     # zoomed out "it's just an empty map, which is not good"); the 9 came
     # over from the atlas, which was about buildings
-    HEX_ZOOM = 7.0
+    HEX_ZOOM = 8.0
     LABELS_SLOT = "watername_ocean"
     RASTER_TILE = 256
     HOME = {"longitude": 114.29, "latitude": 30.58, "zoom": 7.2}  # Wuhan, the pair notebook's start
@@ -1626,7 +1626,7 @@ def _(anywidget, asyncio, traitlets):
           const pngBitmap = (u8) => createImageBitmap(new Blob([u8], {type: "image/png"}));
 
           // ---- the hexagons -----------------------------------------------------------
-          let hexes = [], N = 0, res = -1, hexIndex = new Map(), hattrs = null, hmeta = {}, hcol = null, hexSeq = 0, hover = null, picked = null, imgPick = null;
+          let hexes = [], N = 0, res = -1, hexIndex = new Map(), hattrs = null, hmeta = {}, hcol = null, hexSeq = 0, hexData = {length: 0}, hover = null, picked = null, imgPick = null;
           function recolorHex() {
             if (!N || !hattrs || hattrs.length !== 4 * N) { hcol = null; return; }
             hcol = new Uint8Array(4 * N);
@@ -1831,7 +1831,7 @@ def _(anywidget, asyncio, traitlets):
             // (Stephen, 2026-09-25: the selected hexagon "should appear on the
             // satellite", white on hover and gold when picked, as in the pair)
             if (!st.holding && hcol && z >= HEXZ) out.push(new H3HexagonLayer({
-              id: "hexes", data: {length: N}, getHexagon: (_, {index}) => hexes[index],
+              id: "hexes", data: hexData, getHexagon: (_, {index}) => hexes[index],
               getFillColor: (_, {index}) => [hcol[4 * index], hcol[4 * index + 1], hcol[4 * index + 2], hcol[4 * index + 3]],
               updateTriggers: {getFillColor: [hexSeq], getHexagon: [hexSeq]},
               filled: true, stroked: false, extruded: false, highPrecision: true, pickable: false, beforeId: slot(),
@@ -2073,6 +2073,10 @@ def _(anywidget, asyncio, traitlets):
             if (!cb || !cb.length) { hexes = []; N = 0; hexIndex = new Map(); res = -1; hattrs = null; hcol = null; renderYear(); styleKey(); update(); return; }
             const ids = new BigUint64Array(copyOf(cb));
             N = ids.length; hexes = new Array(N); hexIndex = new Map();
+            // ONE data object per frame: deck compares `data` by reference, and a
+            // new {length: N} on every update() (each hover, pan, card) re-tessellated
+            // every hexagon (150 to 190 ms a time for ~25k, measured 2026-09-25)
+            hexData = {length: N};
             for (let i = 0; i < N; i++) { const h = ids[i].toString(16); hexes[i] = h; hexIndex.set(h, i); }
             try { res = getResolution(hexes[0]); } catch (e) { res = -1; }
             hattrs = ab && ab.length === 4 * N ? new Uint8Array(copyOf(ab)) : null;
@@ -2537,11 +2541,11 @@ def _(mo):
     hexagon, shown as shares. It is one year only, so it describes the
     ground; it does not date anything.
 
-    **Zoomed out (below zoom 7).** The map is WorldCover itself, drawn as
+    **Zoomed out (below zoom 8).** The map is WorldCover itself, drawn as
     tiles from the same COGs (the coarsest overview that still fills each
     tile), in a palette without red: built-up deep violet, cropland gold,
     vegetation in greens, water blue. It shows where the towns, farmland and
-    water are; from zoom 7 the AlphaEarth change hexagons take over.
+    water are; from zoom 8 the AlphaEarth change hexagons take over.
 
     **What happened (Sentinel-2).** Holding the map swaps the hexagons for
     Earth Genome's yearly true-colour mosaic, 2022 to 2025, so the change
