@@ -44,8 +44,9 @@ The readers (AlphaEarth COGs and mosaic, the S2 tiles) and the atlas's face
 are carried over from s2-wsf-aef-overture-atlas.py. WSF and Overture
 buildings are out for now.
 
-Run: uv run marimo run aef-landcover-settlements.py (it fills the window;
+Run: uv run marimo run aef-landcover-settlements.py --sandbox (it fills the window;
 X or Esc gives the notebook back)
+molab: https://molab.marimo.io/github/github.com/kentstephen/aef-landcover-settlements/blob/main/aef-landcover-settlements.py
 
 Attribution: "The AlphaEarth Foundations Satellite Embedding dataset is
 produced by Google and Google DeepMind" (CC BY 4.0). ESA WorldCover 10 m
@@ -153,6 +154,10 @@ def _(mo):
     instead; **scroll** while holding to change its year; let go for the
     hexagons again. **Click** a hexagon for its account and its land cover.
     `X` fills the window.
+
+    [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-landcover-settlements/blob/main/aef-landcover-settlements.py)
+    <small>molab runs in the same region as the data and is the faster place to open this notebook.
+    Locally: `uv run marimo run aef-landcover-settlements.py --sandbox`</small>
     """)
     return
 

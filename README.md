@@ -1,5 +1,7 @@
 # AEF, landcover and settlements
 
+[![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-landcover-settlements/blob/main/aef-landcover-settlements.py)
+
 AlphaEarth Foundations embeddings read against two independent records of
 what is on the ground: Overture Maps landcover and the World Settlement
 Footprint, with Sentinel-2 as the imagery for tracking change: the Earth
@@ -32,8 +34,12 @@ year. Click a hexagon for its year-to-year steps, its land cover and the
 Overture divisions it sits in. Keys: `S` how much, `D` year, `X` fill the
 window.
 
+[Open it in molab](https://molab.marimo.io/github/github.com/kentstephen/aef-landcover-settlements/blob/main/aef-landcover-settlements.py): it runs in the same region as the data, where
+the AlphaEarth reads are several times faster. Locally (dependencies are
+declared inline, PEP 723):
+
 ```
-uv run marimo run aef-landcover-settlements.py
+uv run marimo run aef-landcover-settlements.py --sandbox
 ```
 
 ## Carried over
