@@ -13,14 +13,14 @@ and narrows the sources to these.
 
 ## Datasets
 
-| Dataset | Producer | Where | Licence |
+| Dataset | Producer | Where | License |
 | --- | --- | --- | --- |
 | AlphaEarth Foundations Satellite Embedding, annual, 2017 to 2025 | Google and Google DeepMind ([dataset page](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)) | [tge-labs/aef](https://source.coop/tge-labs/aef), [tge-labs/aef-mosaic](https://source.coop/tge-labs/aef-mosaic) | CC BY 4.0 |
 | ESA WorldCover 10 m 2021 v200 | ESA WorldCover consortium, from Copernicus Sentinel data | `s3://esa-worldcover/v200/2021/map` (AWS open data) | CC BY 4.0 |
 | Overture Maps divisions (place names: PMTiles, and GeoParquet via [fused/overture](https://source.coop/fused/overture)) | Overture Maps Foundation | Overture's release bucket, Source Cooperative | ODbL |
 | World Settlement Footprint (WSF) Tracker, 10 m, 2016 to 2026 | DLR and MindEarth | [mindearth/wsf](https://source.coop/mindearth/wsf) ([DOI 10.5281/zenodo.20424537](https://doi.org/10.5281/zenodo.20424537)) | CC BY 3.0 IGO |
-| Sentinel-2 yearly mosaics (true colour, 2022 to 2025) | Earth Genome, from Copernicus Sentinel data | [earthgenome/sentinel2-yearly-mosaics](https://source.coop/earthgenome/sentinel2-yearly-mosaics) | CC BY 4.0 |
-| Sentinel-2 L2A, EOPF zarr | ESA, Copernicus | [EOPF Sentinel Zarr Samples](https://zarr.eopf.copernicus.eu/) | Copernicus open licence |
+| Sentinel-2 yearly mosaics (true color, 2022 to 2025) | Earth Genome, from Copernicus Sentinel data | [earthgenome/sentinel2-yearly-mosaics](https://source.coop/earthgenome/sentinel2-yearly-mosaics) | CC BY 4.0 |
+| Sentinel-2 L2A, EOPF zarr | ESA, Copernicus | [EOPF Sentinel Zarr Samples](https://zarr.eopf.copernicus.eu/) | Copernicus open license |
 
 ## The notebook
 

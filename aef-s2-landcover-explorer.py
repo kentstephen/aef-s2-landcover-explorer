@@ -70,6 +70,7 @@ def _():
     import json
     import math
     import os
+    import re
     import tempfile
     import time
     import traceback
@@ -136,6 +137,7 @@ def _():
         os,
         pa,
         pq,
+        re,
         tempfile,
         time,
         traceback,
@@ -167,8 +169,8 @@ def _(mo):
     | scroll, space held | the imagery year |
     | `[` `]` | the imagery year, back and forward |
     | `;` `'` | the imagery darker, brighter |
-    | `S` | colour by how much it changed |
-    | `D` | colour by the year of the biggest change |
+    | `S` | color by how much it changed |
+    | `D` | color by the year of the biggest change |
     | `-` `=` | the first year read, earlier, later |
     | `_` `+` | the last year read, earlier, later |
     | `L` | place names on the map, off and on |
@@ -253,7 +255,7 @@ def _(os, tempfile):
     # Built-up is the darkest (deep violet), vegetation in greens by
     # lightness, cropland gold, water blue; no red anywhere.
     WC_TILE_MIN_Z = 4
-    WC_TILE_COLOURS = {
+    WC_TILE_COLORS = {
         10: "2d6a3e", 20: "8fae5a", 30: "cfd99a", 40: "e8c547", 50: "3d2b7a", 60: "d9cbb5",
         70: "f4f6f8", 80: "3a7dc9", 90: "6bb8b0", 95: "2f7f6f", 100: "c9d6c0",
     }
@@ -284,7 +286,7 @@ def _(os, tempfile):
     # the hexagons reach the browser as tiles of cell numbers, not polygons
     # (Stephen, 2026-09-25: "send the hexagons as imagery"): each 256 px map
     # tile is drawn at HEX_TILE_PX a side, every pixel the row of the hexagon
-    # it falls in, coloured in the browser
+    # it falls in, colored in the browser
     HEX_TILE_PX = 512
     # the zoom ladder below picks the READ res (which AlphaEarth overview is
     # read). With the hexagons drawn as an image their count no longer costs
@@ -356,7 +358,7 @@ def _(os, tempfile):
         WC_PREFIX,
         WC_REGION,
         WC_S3_OPTS,
-        WC_TILE_COLOURS,
+        WC_TILE_COLORS,
         WC_TILE_MIN_Z,
         ZOOM0,
     )
@@ -1016,7 +1018,7 @@ def _(
     WC_PREFIX,
     WC_REGION,
     WC_S3_OPTS,
-    WC_TILE_COLOURS,
+    WC_TILE_COLORS,
     WC_TILE_MIN_Z,
     Window,
     asyncio,
@@ -1123,11 +1125,11 @@ def _(
         return out, f"land cover {lvl} {len(parts)} tiles read {t1 - t0:.1f} s · fold {out.num_rows:,} {time.time() - t1:.1f} s"
 
     # ---- ESA WorldCover as map tiles, below HEX_ZOOM ------------------------------
-    # One Web Mercator tile: every pixel's centre looked up (nearest) in the
+    # One Web Mercator tile: every pixel's center looked up (nearest) in the
     # overview whose pixel is no bigger than the tile's, from each 3 degree
-    # file under it, then coloured with WC_TILE_COLOURS. Kept in memory.
+    # file under it, then colored with WC_TILE_COLORS. Kept in memory.
     _LUT = np.zeros((256, 4), np.uint8)
-    for _code, _hx in WC_TILE_COLOURS.items():
+    for _code, _hx in WC_TILE_COLORS.items():
         _LUT[_code] = (int(_hx[0:2], 16), int(_hx[2:4], 16), int(_hx[4:6], 16), 225)
     _wc_png = {}
 
@@ -1298,7 +1300,7 @@ def _(WC_CLASSES, WC_CODES, change_resolution, con, np, pa):
 
 
 @app.cell
-def _(anywidget, asyncio, traitlets):
+def _(anywidget, asyncio, time, traitlets):
     class ChangeMap(anywidget.AnyWidget):
         """The map: the AlphaEarth hexagons in viridis on a plain basemap; press
         and hold for the Sentinel-2 imagery (the hexagons go while you hold),
@@ -1325,31 +1327,38 @@ def _(anywidget, asyncio, traitlets):
         def __init__(self, **kw):
             super().__init__(**kw)
             self.tile_fn = None  # async (src, z, x, y, year) -> PNG bytes or None
+            self.tile_times = {}  # (src, z, x, y, year) -> {"wait", "run"} ms, set by tile_fn
             self.on_msg(self._on_custom)
 
         def _on_custom(self, widget, content, buffers):
             if not isinstance(content, dict) or content.get("kind") != "tile":
                 return
             try:
-                asyncio.get_running_loop().create_task(self._tile(content))
+                asyncio.get_running_loop().create_task(self._tile(content, time.time()))
             except RuntimeError as e:
                 self.send({"kind": "tile", "id": content.get("id"), "err": f"no loop: {e}"})
 
-        async def _tile(self, c):
+        async def _tile(self, c, t_recv=None):
             """A FAILURE IS AN ERROR, never an empty tile (deck caches an empty
             tile as loaded and the area stays blank for good)."""
             if self.tile_fn is None:
                 self.send({"kind": "tile", "id": c["id"], "err": "no tile_fn (re-run the wiring cell)"})
                 return
+            key = (c.get("src", "s2"), int(c["z"]), int(c["x"]), int(c["y"]), int(c["year"]))
+            t_run = time.time()
             try:
-                png = await self.tile_fn(c.get("src", "s2"), int(c["z"]), int(c["x"]), int(c["y"]), int(c["year"]))
+                png = await self.tile_fn(*key)
             except Exception as e:
+                self.tile_times.pop(key, None)
                 self.send({"kind": "tile", "id": c["id"], "err": f"{type(e).__name__}: {e}"})
                 return
+            # timings for the tests: wall clock at receipt and at send, the
+            # loop's delay before the tile started, and tile_fn's own split
+            kt = {"recv": t_recv, "sent": time.time(), "loop": 1e3 * (t_run - t_recv) if t_recv else None, **self.tile_times.pop(key, {})}
             if png is None:
-                self.send({"kind": "tile", "id": c["id"], "empty": True})
+                self.send({"kind": "tile", "id": c["id"], "empty": True, "kt": kt})
             else:
-                self.send({"kind": "tile", "id": c["id"]}, buffers=[png])
+                self.send({"kind": "tile", "id": c["id"], "kt": kt}, buffers=[png])
 
         _css = r"""
         .at{--glass:rgba(255,255,255,.9);--glass-hi:#fff;--line:rgba(24,32,40,.13);--text:#1b2127;--muted:#5d6873;--faint:rgba(24,32,40,.18);--cool:#0072b2;--sel:rgba(24,32,40,.08);
@@ -1564,7 +1573,7 @@ def _(anywidget, asyncio, traitlets):
             row.appendChild(seg);
             return () => items.forEach(([k], i) => bs[i].classList.toggle("on", isOn(k)));
           };
-          const rFill = rowOf("Colour by");
+          const rFill = rowOf("Color by");
           rFill.classList.add("top");
           const styleFill = segOf(rFill, [["much", "How much it changed", "how far the ground's AlphaEarth numbers moved between the first and last year read (S)"],
                                           ["year", "Year of the biggest change", "the year each hexagon's change stood out most against the usual change that year, faded where the ground barely moved (D)"]],
@@ -1648,7 +1657,7 @@ def _(anywidget, asyncio, traitlets):
           const about = el_("div", "at-about");
           about.innerHTML = `<div class="box at-glass">
             <h2>Where the ground changed</h2>
-            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. The hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Switch to <b>year of the biggest change</b> to colour each hexagon by the year its change stood out most, light yellow for the first year to dark brown for the last. Each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all). Hexagons fade where they barely moved.</p>
+            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. The hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Switch to <b>year of the biggest change</b> to color each hexagon by the year its change stood out most, light yellow for the first year to dark brown for the last. Each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all). Hexagons fade where they barely moved.</p>
             <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: move it off what you want to see, drag the map to look around, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
             <p><b>Click</b> a hexagon for its account: each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. WorldCover is one map of one year, so it says what a place is, not when it changed.</p>
             <p><small>Keys: hold space for the imagery, scroll for its year; S how much it changed, D the year of the biggest change; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search; Esc close.</small></p>
@@ -1685,11 +1694,15 @@ def _(anywidget, asyncio, traitlets):
           const pending = new Map();
           let tseq = 0;
           const tstat = {asked: 0, got: 0, empty: 0, err: 0, abort: 0};
+          const tlog = [];  // per tile, for the tests: asked, arrived, kernel times, bytes
+          const tlogOf = new Map();
           model.on("msg:custom", (m, buffers) => {
             if (!m || m.kind !== "tile") return;
             const p = pending.get(m.id);
             if (!p) return;
             pending.delete(m.id);
+            const lg = tlogOf.get(m.id);
+            if (lg) { lg.got = Date.now(); lg.kt = m.kt || null; lg.bytes = buffers && buffers.length ? (buffers[0].byteLength || 0) : 0; lg.err = m.err || null; tlogOf.delete(m.id); }
             if (m.err) { tstat.err++; p.reject(new Error(m.err)); return; }
             if (m.empty || !buffers || !buffers.length) { tstat.empty++; p.resolve(null); return; }
             tstat.got++;
@@ -1698,8 +1711,10 @@ def _(anywidget, asyncio, traitlets):
           const ask = (src, year, index, signal) => new Promise((resolve, reject) => {
             const id = ++tseq; tstat.asked++;
             pending.set(id, {resolve, reject});
+            const lg = {id, src, year, z: index.z, x: index.x, y: index.y, asked: Date.now()};
+            tlog.push(lg); tlogOf.set(id, lg); if (tlog.length > 4000) tlog.splice(0, 1000);
             model.send({kind: "tile", id, src, year, x: index.x, y: index.y, z: index.z});
-            if (signal) signal.addEventListener("abort", () => { pending.delete(id); tstat.abort++; const e = new Error("aborted"); e.name = "AbortError"; reject(e); });
+            if (signal) signal.addEventListener("abort", () => { if (pending.has(id)) lg.aborted = Date.now(); tlogOf.delete(id); pending.delete(id); tstat.abort++; const e = new Error("aborted"); e.name = "AbortError"; reject(e); });
           });
           const pngBitmap = (u8) => createImageBitmap(new Blob([u8], {type: "image/png"}));
 
@@ -1796,12 +1811,12 @@ def _(anywidget, asyncio, traitlets):
             if (c.place && c.place.length) h += `<div class="place">${c.place.map((q) => typeof q === "string" ? esc(q) : esc(q.name) + (q.tag ? ` <span>(${esc(q.tag)})</span>` : "")).join(", ")}</div>`;
             if (c.kind === "note") return h + `<h3>${esc(c.title || "")}</h3></div>`;
             h += `<h3>This hexagon</h3>`;
-            // picked on the imagery: its H3 string and centre, each copyable
+            // picked on the imagery: its H3 string and center, each copyable
             if (c.cell && c.cell === imgPick) {
               let ll = null; try { ll = cellToLatLng(c.cell); } catch (e) {}
               const lat_lon = ll ? `${ll[0].toFixed(6)}, ${ll[1].toFixed(6)}` : "";
               h += `<div class="coords"><code title="H3 cell">${esc(c.cell)}</code><button data-copy="${esc(c.cell)}">copy</button>`;
-              if (lat_lon) h += `<code title="lat, long of the cell's centre">${lat_lon}</code><button data-copy="${lat_lon}">copy</button>`;
+              if (lat_lon) h += `<code title="lat, long of the cell's center">${lat_lon}</code><button data-copy="${lat_lon}">copy</button>`;
               h += `</div>`;
             }
             if (c.level == null) h += `<p>No AlphaEarth data here.</p>`;
@@ -1907,19 +1922,21 @@ def _(anywidget, asyncio, traitlets):
             renderSubLayers: (p) => { if (!p.data) return null; const {west, south, east, north} = p.tile.bbox; return new BitmapLayer(p, {data: null, image: p.data, bounds: [west, south, east, north]}); },
           });
           // the hexagons: tiles of cell numbers from the kernel (1 + the row in
-          // this frame, 0 none), coloured here from hcol, so a mode or window
+          // this frame, 0 none), colored here from hcol, so a mode or window
           // change repaints without a round trip. A tile from an older frame
           // keeps its last picture until the new frame's tile replaces it.
           const unz = async (u8) => new Uint32Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
+          const ptimes = [];  // per hexagon tile painted, for the tests
           function paintTile(d) {
             if (d.seq !== hmeta.seq || !hcol32) return d.canvas || null;
             if (d.canvas && d.cseq === hexSeq) return d.canvas;
-            const n = d.side, img = new ImageData(n, n), px = new Uint32Array(img.data.buffer), ids = d.ids;
+            const tp = performance.now(), n = d.side, img = new ImageData(n, n), px = new Uint32Array(img.data.buffer), ids = d.ids;
             for (let i = 0; i < ids.length; i++) { const k = ids[i]; if (k) px[i] = hcol32[k - 1]; }
             const c = document.createElement("canvas");
             c.width = n; c.height = n;
             c.getContext("2d").putImageData(img, 0, 0);
             d.canvas = c; d.cseq = hexSeq;
+            ptimes.push({t: Date.now(), ms: performance.now() - tp, unz: d.unz, ready: d.done}); if (ptimes.length > 4000) ptimes.splice(0, 1000);
             return c;
           }
           const hexLayer = (visible) => new TileLayer({
@@ -1927,8 +1944,8 @@ def _(anywidget, asyncio, traitlets):
             getTileData: async ({index, signal}) => {
               const seq = hmeta.seq, u8 = await ask("hex", seq, index, signal);
               if (!u8) return null;
-              const ids = await unz(u8);
-              return {ids, seq, side: Math.round(Math.sqrt(ids.length))};
+              const t0 = performance.now(), ids = await unz(u8);
+              return {ids, seq, side: Math.round(Math.sqrt(ids.length)), unz: performance.now() - t0, done: Date.now()};
             },
             onTileError: (e) => { if (!e || (e.name !== "AbortError" && !/stale/.test(e.message || ""))) say("hexagon tile: " + ((e && e.message) || e)); },
             tileSize: 256, minZoom: Math.floor(HEXZ), maxZoom: 17, refinementStrategy: "best-available", debounceTime: 60, beforeId: slot(),
@@ -2010,7 +2027,7 @@ def _(anywidget, asyncio, traitlets):
           window.addEventListener("pointercancel", endMouse, true);
           window.addEventListener("blur", endAny);
           // the space bar: down starts a hold at the pointer (or the map's
-          // centre before the pointer has been over it), up ends it
+          // center before the pointer has been over it), up ends it
           function spaceDown() {
             if (st.holding || !map) return;
             const r = mapEl.getBoundingClientRect();
@@ -2177,13 +2194,16 @@ def _(anywidget, asyncio, traitlets):
             map.on("error", (ev) => { if (ev && ev.error && ev.error.message && !/tile|404/i.test(ev.error.message)) say("map: " + ev.error.message); });
             new ResizeObserver(() => { try { map.resize(); } catch (e) {} fitCard(); }).observe(mapEl);
             window.__cmMaps = () => [map];
-            window.__cmState = () => ({st: Object.assign({}, st), hex: N, res, hmeta, tiles: tstat, card: cardData});
-            // for tests: the centre of the first hexagon whose biggest step is year y and that moved a fair amount
+            window.__cmState = () => ({st: Object.assign({}, st), hex: N, res, hmeta, tiles: tstat, card: cardData, status: model.get("status")});
+            window.__cmTiles = () => ({log: tlog, paints: ptimes, frames: flog});
+            // for tests: the center of the first hexagon whose biggest step is year y and that moved a fair amount
             window.__cmHexAt = (y) => { const b = map.getBounds(); for (let i = 0; i < N; i++) if (hattrs && hattrs[4 * i] === y - 2000 && hattrs[4 * i + 1] >= FAIR) { const r = cellToBoundary(hexes[i], true); const c = r.slice(0, -1).reduce((a, p) => [a[0] + p[0] / (r.length - 1), a[1] + p[1] / (r.length - 1)], [0, 0]); if (b.contains(c) && map.project(c).x < mapEl.clientWidth - 360 && map.project(c).y > 200) return c; } return null; };
           }
 
           // ---- the kernel's data -----------------------------------------------------------------
+          const flog = [];  // per frame received, for the tests
           const loadHex = () => {
+            const tl = performance.now();
             const cb = bytesOf(model.get("cells")), ab = bytesOf(model.get("hattrs"));
             try { hmeta = JSON.parse(model.get("hmeta") || "{}"); } catch (e) { hmeta = {}; }
             if (!cb || !cb.length) { hexes = []; N = 0; hexIndex = new Map(); res = -1; hattrs = null; hcol = null; hcol32 = null; renderYear(); styleKey(); update(); return; }
@@ -2194,6 +2214,7 @@ def _(anywidget, asyncio, traitlets):
             hattrs = ab && ab.length === 4 * N ? new Uint8Array(copyOf(ab)) : null;
             hover = null;
             recolorHex(); renderYear(); styleKey(); update();
+            flog.push({seq: hmeta.seq, n: N, t: Date.now(), ms: performance.now() - tl});
           };
           let pendHex = null;
           const hexSoon = () => { clearTimeout(pendHex); pendHex = setTimeout(loadHex, 0); };
@@ -2236,7 +2257,7 @@ def _(
     VIEW_H,
     VIRIDIS,
     WC_CLASSES,
-    WC_TILE_COLOURS,
+    WC_TILE_COLORS,
     WC_TILE_MIN_Z,
     json,
     mo,
@@ -2254,7 +2275,7 @@ def _(
         "aef_from": AEF_FROM0, "aef_to": AEF_TO0, "aef_years": list(AEF_YEARS_ALL),
         "hex_zoom": HEX_ZOOM, "div_pm": OV_DIV_PM, "fit": _fit, "hold_ms": HOLD_MS, "hold_slop": HOLD_SLOP_PX,
         "viridis": VIRIDIS, "alpha_fill": ALPHA_FILL, "alpha_quiet": ALPHA_QUIET,
-        "wc_min_z": WC_TILE_MIN_Z, "wc_key": [[_nm, WC_TILE_COLOURS[_c]] for _c, _nm in WC_CLASSES if _c in (50, 40, 10, 30, 80)],
+        "wc_min_z": WC_TILE_MIN_Z, "wc_key": [[_nm, WC_TILE_COLORS[_c]] for _c, _nm in WC_CLASSES if _c in (50, 40, 10, 30, 80)],
     }))
     HOLD = {
         "frame": None, "sent": None, "box": None, "res": None, "vs": None,
@@ -2292,6 +2313,7 @@ def _(
     np,
     pa,
     pad_box,
+    re,
     res_for_view,
     s2_set_scale,
     s2_tile_png,
@@ -2312,8 +2334,8 @@ def _(
 
     def _hex_tile(fr, z, x, y):
         """A map tile of the frame's hexagons as cell numbers: HEX_TILE_PX a
-        side, each pixel 1 + the frame row of the hexagon its centre falls in
-        (0 none), uint32 little-endian, deflated. The browser colours it."""
+        side, each pixel 1 + the frame row of the hexagon its center falls in
+        (0 none), uint32 little-endian, deflated. The browser colors it."""
         T, n = HEX_TILE_PX, 2 ** z
         f = (np.arange(T) + 0.5) / T
         lon = (x + f) / n * 360.0 - 180.0
@@ -2330,14 +2352,28 @@ def _(
         return zlib.compress(np.where(hit, i + 1, 0).astype("<u4").tobytes(), 1)
 
     async def _tile_fn(src, z, x, y, year):
+        t0 = time.time()
         if src == "wc":
-            return await wc_tile_png(z, x, y)
-        if src == "hex":
+            out = await wc_tile_png(z, x, y)
+        elif src == "hex":
             fr = HOLD["frame"]
             if fr is None or fr.get("seq") != year:
                 raise RuntimeError("stale hexagon frame")
-            return await cpu(_hex_tile, fr, z, x, y)
-        return await s2_tile_png(z, x, y, year)
+            ts = {}
+
+            def _job():
+                ts["s"] = time.time()
+                r = _hex_tile(fr, z, x, y)
+                ts["e"] = time.time()
+                return r
+
+            out = await cpu(_job)
+            cmap.tile_times[(src, z, x, y, year)] = {"wait": 1e3 * (ts["s"] - t0), "run": 1e3 * (ts["e"] - ts["s"])}
+            return out
+        else:
+            out = await s2_tile_png(z, x, y, year)
+        cmap.tile_times[(src, z, x, y, year)] = {"run": 1e3 * (time.time() - t0)}
+        return out
 
     cmap.tile_fn = _tile_fn
 
@@ -2387,7 +2423,7 @@ def _(
         HOLD["hex_status"] = msg
 
     def _paint():
-        """Send the frame once: 4 bytes per hexagon, coloured in the browser."""
+        """Send the frame once: 4 bytes per hexagon, colored in the browser."""
         fr = HOLD["frame"]
         if fr is None or HOLD["sent"] is fr:
             return
@@ -2401,7 +2437,7 @@ def _(
             cmap.hattrs = np.ascontiguousarray(np.stack([yc, lb, tc, ts], 1)).tobytes()
             cmap.hmeta = json.dumps({
                 "y0": int(fr["years"][0]), "y1": int(fr["years"][-1]), "km2": float(CELL_KM2.get(HOLD["res"], 0)),
-                "seq": int(fr.get("seq", 0)), "carry": CARRY_RES,
+                "seq": int(fr.get("seq", 0)), "carry": CARRY_RES, "timing": fr.get("timing"),
                 "classes": [_WC_NAME[c] for c in WC_CODES],
             })
         HOLD["sent"] = fr
@@ -2442,12 +2478,28 @@ def _(
             aef_by_year = {y: HOLD["aef"][(y, bkey)][0] for y in years if (y, bkey) in HOLD["aef"]}
             t1 = time.time()
             fr = await cpu(build_frame, aef_by_year, wc, y0, y1, res)
+            if fr is not None:
+                fr["timing"] = {
+                    "reads": 1e3 * (t1 - t0), "frame": 1e3 * (time.time() - t1),
+                    "aef": [HOLD["aef"][(y, bkey)][1] for y in years if (y, bkey) in HOLD["aef"]], "wc": s_wc,
+                    "t_frame": time.time(),
+                }
             if fr is None:
                 HOLD["hex_status"] = f"hexagons: res {res}, AlphaEarth has fewer than two years here | " + " | ".join(HOLD["aef"][(y, bkey)][1] for y in years if (y, bkey) in HOLD["aef"])
                 return
             HOLD["fseq"] = HOLD.get("fseq", 0) + 1
             fr["seq"] = HOLD["fseq"]
-            stats = f"read res {rres}, hexagons res {res}, peak of res {fres} | {s_wc} | frame {time.time() - t1:.1f} s"
+            # each year's AlphaEarth read and fold, "c" where it came from memory
+            _rd = []
+            for y in years:
+                if (y, bkey) not in HOLD["aef"]:
+                    continue
+                m_ = re.search(r"([\d.]+) s · fold [\d,]+ ([\d.]+) s", HOLD["aef"][(y, bkey)][1] or "")
+                _rd.append(f"{y} c" if y not in need else f"{y} {m_.group(1)}+{m_.group(2)} s" if m_ else f"{y} ?")
+            stats = (
+                f"read res {rres}, hexagons res {res}, peak of res {fres} | AEF read+fold {', '.join(_rd)} "
+                f"(all {t1 - t0:.1f} s) | {s_wc} | frame {time.time() - t1:.1f} s"
+            )
             HOLD["memo"][key] = (fr, stats)
             while len(HOLD["memo"]) > 12:
                 HOLD["memo"].pop(next(iter(HOLD["memo"])))
@@ -2677,15 +2729,15 @@ def _(mo):
     instead of being averaged away by the quiet ground around it.
 
     **Drawn as tiles.** The hexagons reach the browser as map tiles in
-    which every pixel names the hexagon it falls in, coloured in the
+    which every pixel names the hexagon it falls in, colored in the
     browser; hover and click look the hexagon up from the pointer with
     h3-js. The browser draws images, however many hexagons there are.
 
     **How much it changed (viridis).** Each hexagon's yearly vector is
-    normalised, and `disp` is 1 minus the cosine between the window's first
+    normalized, and `disp` is 1 minus the cosine between the window's first
     and last year: 0 means the fingerprint did not move. The fill stretches
-    `disp` to this view's 2nd to 98th percentile, so the colours rank the
-    hexagons against their neighbours, not against the world. Hexagons
+    `disp` to this view's 2nd to 98th percentile, so the colors rank the
+    hexagons against their neighbors, not against the world. Hexagons
     that barely moved are drawn faint.
 
     **When it changed (YlOrBr, `D`).** Every year-to-year step is scored
@@ -2708,9 +2760,9 @@ def _(mo):
     water are; from zoom 9 the AlphaEarth change hexagons take over.
 
     **What happened (Sentinel-2).** Holding the map swaps the hexagons for
-    Earth Genome's yearly true-colour mosaic, 2022 to 2025, so the change
+    Earth Genome's yearly true-color mosaic, 2022 to 2025, so the change
     the hexagons point to can be checked against the imagery. Nothing
-    coloured is drawn over it.
+    colored is drawn over it.
     """)
     return
 
