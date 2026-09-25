@@ -28,11 +28,12 @@ and narrows the sources to these.
 much the ground changed over the years read, or, in YlOrBr, the year its
 change stood out most against that year's usual change in view), ESA
 WorldCover 2021 class shares per hexagon, and the Earth Genome Sentinel-2
-mosaic on demand. Hold space (the map still pans) or press and hold on the
-map to swap the hexagons for the imagery; scroll while holding to step the
-year. Click a hexagon for its year-to-year steps, its land cover and the
-Overture divisions it sits in. Keys: `S` how much, `D` year, `X` fill the
-window.
+mosaic on demand. Hold space (the map still pans) to swap the hexagons for
+the imagery; scroll while holding to step the year. Click a hexagon for its
+year-to-year steps, its land cover and the Overture divisions it sits in
+(gold outline, click again to clear). Click on the imagery with space held
+for the cell's H3 string and lat, long, each copyable. The full key list is
+at the top of the notebook.
 
 [Open it in molab](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py): it runs in the same region as the data, where
 the AlphaEarth reads are several times faster. Locally (dependencies are

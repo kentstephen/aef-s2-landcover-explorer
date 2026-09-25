@@ -30,12 +30,12 @@ datasets to show me what's actually happening."
 - The map is the AlphaEarth hexagons in viridis: how much the ground's 64
   numbers moved over the year window (or the year its change stood out).
   They say where to look.
-- Hold space (or press and hold on the map): the hexagons go and the
+- Hold space: the hexagons go and the
   Sentinel-2 yearly mosaic (Earth Genome, 2022 to 2025) fills the view,
   opening on 2022 the first time and after that where you left off. Scroll
   while holding to step through the years; with space held the map can be
-  dragged. Let go and the hexagons come back. Nothing coloured is ever drawn
-  over the imagery.
+  dragged. Let go and the hexagons come back. Over the imagery only two
+  outlines: white under the pointer, gold on the picked cell.
 - The card at the top right: the imagery year, how many hexagons in view
   changed in each year, and the clicked hexagon's account (its year-to-year
   steps, and its land cover from ESA WorldCover 2021).
@@ -150,10 +150,27 @@ def _(mo):
     # Where the ground changed
 
     AlphaEarth hexagons in viridis show where the ground changed over the
-    year window. **Press and hold** on the map to see the Sentinel-2 imagery
-    instead; **scroll** while holding to change its year; let go for the
-    hexagons again. **Click** a hexagon for its account and its land cover.
-    `X` fills the window.
+    year window. **Hold space** to see the Sentinel-2 imagery instead;
+    **scroll** while holding to change its year; let go for the hexagons
+    again. **Click** a hexagon for its account and its land cover (gold
+    outline); click it again to clear it. **Click on the imagery** (space
+    held) to pick the cell there: the card adds its H3 string and lat, long,
+    each with a copy button.
+
+    | Key | Does |
+    | --- | --- |
+    | `space` (hold) | the Sentinel-2 imagery instead of the hexagons; the map still drags |
+    | scroll, space held | the imagery year |
+    | `[` `]` | the imagery year, back and forward |
+    | `;` `'` | the imagery darker, brighter |
+    | `S` | colour by how much it changed |
+    | `D` | colour by the year of the biggest change |
+    | `-` `=` | the first year read, earlier, later |
+    | `_` `+` | the last year read, earlier, later |
+    | `L` | place names on the map, off and on |
+    | `/` | search a place |
+    | `X` | fill the window, and back |
+    | `Esc` | close the about box, the menu, the card, then fill the window |
 
     [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py)
     <small>molab runs in the same region as the data and is the faster place to open this notebook.
@@ -241,7 +258,7 @@ def _(os, tempfile):
     HEX_ZOOM = 9.0
     LABELS_SLOT = "watername_ocean"
     RASTER_TILE = 256
-    HOME = {"longitude": 3.62, "latitude": 6.46, "zoom": 11.2}  # Lagos, the Lekki corridor
+    HOME = {"longitude": 114.29, "latitude": 30.58, "zoom": 7.2}  # Wuhan, the pair notebook's start
 
     # how long a still press takes to become a hold, and how far the pointer
     # may drift before it counts as a pan instead
@@ -1268,6 +1285,10 @@ def _(anywidget, asyncio, traitlets):
         .at-yc .hex .place span{font-weight:400;color:var(--muted)}
         .at-yc .hex h3{margin:0 0 6px;font-size:16px;font-weight:600;letter-spacing:-.005em;padding-right:28px}
         .at-yc .hex p{margin:0 0 8px}
+        .at-yc .coords{display:grid;grid-template-columns:1fr auto;gap:3px 8px;align-items:center;margin:6px 0 10px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+        .at-yc .coords code{user-select:all;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .at-yc .coords button{border:1px solid var(--line);background:none;color:var(--muted);cursor:pointer;border-radius:6px;padding:1px 7px;font:12px/1.5 "Instrument Sans",ui-sans-serif,system-ui,sans-serif}
+        .at-yc .coords button:hover{background:var(--sel);color:var(--text)}
         .at-yc .x{position:absolute;right:-6px;top:6px;border:0;background:none;color:var(--muted);cursor:pointer;width:28px;height:28px;border-radius:8px;font-size:17px;line-height:1}
         .at-yc .x:hover{background:var(--sel);color:var(--text)}
         .at-yc svg text{font-size:10.5px;fill:var(--muted)}
@@ -1303,7 +1324,7 @@ def _(anywidget, asyncio, traitlets):
         import {MapboxOverlay} from "https://esm.sh/@deck.gl/mapbox@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {BitmapLayer, PathLayer} from "https://esm.sh/@deck.gl/layers@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {TileLayer, H3HexagonLayer} from "https://esm.sh/@deck.gl/geo-layers@9.3.10?deps=@deck.gl/core@9.3.10,@deck.gl/extensions@9.3.10,@deck.gl/layers@9.3.10,@deck.gl/mesh-layers@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
-        import {latLngToCell, getResolution, cellToBoundary} from "https://esm.sh/h3-js@4.5.0";
+        import {latLngToCell, getResolution, cellToBoundary, cellToLatLng} from "https://esm.sh/h3-js@4.5.0";
         import {Protocol as PMProtocol} from "https://esm.sh/pmtiles@4.5.0";
         maplibregl.addProtocol("pmtiles", new PMProtocol().tile);
 
@@ -1465,7 +1486,7 @@ def _(anywidget, asyncio, traitlets):
           about.innerHTML = `<div class="box at-glass">
             <h2>Where the ground changed</h2>
             <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. The hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Switch to <b>year of the biggest change</b> to colour each hexagon by the year its change stood out most, light yellow for the first year to dark brown for the last. Each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all). Hexagons fade where they barely moved.</p>
-            <p><b>Hold space</b>, or press and hold on the map, to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. With space the mouse stays free: move it off what you want to see, or drag the map to look around. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
+            <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: move it off what you want to see, drag the map to look around, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
             <p><b>Click</b> a hexagon for its account: each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. WorldCover is one map of one year, so it says what a place is, not when it changed.</p>
             <p><small>Keys: hold space for the imagery, scroll for its year; S how much it changed, D the year of the biggest change; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search; Esc close.</small></p>
             <p><small>AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions (ODbL), the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
@@ -1520,7 +1541,7 @@ def _(anywidget, asyncio, traitlets):
           const pngBitmap = (u8) => createImageBitmap(new Blob([u8], {type: "image/png"}));
 
           // ---- the hexagons -----------------------------------------------------------
-          let hexes = [], N = 0, res = -1, hexIndex = new Map(), hattrs = null, hmeta = {}, hcol = null, hexSeq = 0, hover = null, picked = null;
+          let hexes = [], N = 0, res = -1, hexIndex = new Map(), hattrs = null, hmeta = {}, hcol = null, hexSeq = 0, hover = null, picked = null, imgPick = null;
           function recolorHex() {
             if (!N || !hattrs || hattrs.length !== 4 * N) { hcol = null; return; }
             hcol = new Uint8Array(4 * N);
@@ -1610,6 +1631,14 @@ def _(anywidget, asyncio, traitlets):
             if (c.place && c.place.length) h += `<div class="place">${c.place.map((q) => typeof q === "string" ? esc(q) : esc(q.name) + (q.tag ? ` <span>(${esc(q.tag)})</span>` : "")).join(", ")}</div>`;
             if (c.kind === "note") return h + `<h3>${esc(c.title || "")}</h3></div>`;
             h += `<h3>This hexagon</h3>`;
+            // picked on the imagery: its H3 string and centre, each copyable
+            if (c.cell && c.cell === imgPick) {
+              let ll = null; try { ll = cellToLatLng(c.cell); } catch (e) {}
+              const lat_lon = ll ? `${ll[0].toFixed(6)}, ${ll[1].toFixed(6)}` : "";
+              h += `<div class="coords"><code title="H3 cell">${esc(c.cell)}</code><button data-copy="${esc(c.cell)}">copy</button>`;
+              if (lat_lon) h += `<code title="lat, long of the cell's centre">${lat_lon}</code><button data-copy="${lat_lon}">copy</button>`;
+              h += `</div>`;
+            }
             if (c.level == null) h += `<p>No AlphaEarth data here.</p>`;
             else {
               h += `<p>AlphaEarth: the ground changed <b>${howMuch(c.level)}</b> from ${c.y0} to ${c.y1}, compared with the rest of the view. Its year-to-year change stood out most between the <b>${c.big - 1} and ${c.big}</b> pictures.</p>`;
@@ -1628,7 +1657,7 @@ def _(anywidget, asyncio, traitlets):
           function renderYear() {
             yc.classList.toggle("holding", st.holding);
             const c = viewCounts();
-            let h = `<div class="yr"><b>${st.imgYear}</b><span>${st.holding ? "Scroll for another year. Let go to see the hexagons." : "Imagery year. Hold space, or press and hold on the map, to see it."}</span></div>`;
+            let h = `<div class="yr"><b>${st.imgYear}</b><span>${st.holding ? "Scroll for another year. Let go to see the hexagons." : "Imagery year. Hold space to see it."}</span></div>`;
             if (N && hattrs) {
               h += `<h4>Where it changed, by year</h4><p class="sub">Hexagons in view that changed a fair amount or more, by the year their change stood out most</p>`;
               h += yearBars(c);
@@ -1659,12 +1688,30 @@ def _(anywidget, asyncio, traitlets):
             tip.style.top = (e.clientY - p.top + 12) + "px";
           });
           yc.addEventListener("pointerleave", () => { tip.style.display = "none"; });
+          yc.addEventListener("click", (e) => {
+            const b = e.target && e.target.closest && e.target.closest("[data-copy]");
+            if (!b) return;
+            e.stopPropagation();
+            const t = b.getAttribute("data-copy");
+            const done = () => { b.textContent = "copied"; setTimeout(() => { b.textContent = "copy"; }, 1200); };
+            // the notebook may sit in an iframe without clipboard permission (molab): fall back to a selection copy
+            const fallback = () => { const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0"; root.appendChild(ta); ta.select(); try { document.execCommand("copy"); done(); } catch (e2) {} ta.remove(); };
+            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done, fallback); else fallback();
+          });
           function renderCard() {
             try { cardData = JSON.parse(model.get("card") || "null"); } catch (e) { cardData = null; }
             picked = cardData && cardData.cell ? cardData.cell : null;
             renderYear(); update();
           }
-          function closeCard() { model.set("pick", JSON.stringify({close: true, n: ++seq})); model.save_changes(); cardData = null; picked = null; renderYear(); update(); }
+          function closeCard() { model.set("pick", JSON.stringify({close: true, n: ++seq})); model.save_changes(); cardData = null; picked = null; imgPick = null; renderYear(); update(); }
+          // a pick: the same cell again clears it (Stephen, 2026-09-25: the
+          // selected hexagon stays "unless it's clicked again")
+          function pickCell(cell, ll, pt, onImagery) {
+            if (cell && cell === picked) { closeCard(); return; }
+            imgPick = onImagery ? cell : null;
+            model.set("pick", JSON.stringify({cell, lon: ll.lng, lat: ll.lat, admin: adminAt(pt), n: ++seq}));
+            model.save_changes();
+          }
 
           // ---- the layers --------------------------------------------------------------
           let map = null, ov = null;
@@ -1686,9 +1733,10 @@ def _(anywidget, asyncio, traitlets):
             const out = [];
             const z = map ? map.getZoom() : 0;
             if (st.holding || z >= HEXZ) for (const y of S2Y) out.push(s2Layer(y));
-            // while holding: the imagery alone, nothing drawn over it
-            if (st.holding) return out;
-            if (hcol && z >= HEXZ) out.push(new H3HexagonLayer({
+            // while holding: the imagery, and over it only the two outlines
+            // (Stephen, 2026-09-25: the selected hexagon "should appear on the
+            // satellite", white on hover and gold when picked, as in the pair)
+            if (!st.holding && hcol && z >= HEXZ) out.push(new H3HexagonLayer({
               id: "hexes", data: {length: N}, getHexagon: (_, {index}) => hexes[index],
               getFillColor: (_, {index}) => [hcol[4 * index], hcol[4 * index + 1], hcol[4 * index + 2], hcol[4 * index + 3]],
               updateTriggers: {getFillColor: [hexSeq], getHexagon: [hexSeq]},
@@ -1696,7 +1744,7 @@ def _(anywidget, asyncio, traitlets):
             }));
             const hv = hover != null && hover >= 0 ? outline("hover", hexes[hover], [255, 255, 255, 235], 2) : null;
             if (hv) out.push(hv);
-            const pk = picked ? outline("picked", picked, [255, 255, 255, 255], 3) : null;
+            const pk = picked ? outline("picked", picked, [255, 200, 40, 255], 3) : null;
             if (pk) out.push(pk);
             return out;
           }
@@ -1707,12 +1755,11 @@ def _(anywidget, asyncio, traitlets):
           }
 
           // ---- hold: the imagery ------------------------------------------------------------
-          // two ways in: hold SPACE (the mouse stays free, so it can rest off the
+          // hold SPACE, only (the mouse stays free, so it can rest off the
           // building you are looking at: Stephen, 2026-09-25, "when my mouse is
-          // over a tiny building, the mouse obscures the building"), or a still
-          // press longer than HOLD_MS (a press that moves more than SLOP pixels
-          // first stays a pan). It picks the hexagon under the
-          // pointer (its card opens); the imagery opens on the year the last
+          // over a tiny building, the mouse obscures the building"; the press
+          // and hold on the map is gone: "that should just be space"). The
+          // imagery opens on the year the last
           // hold left off at (2022 the first time); while holding, the wheel anywhere over the map or the card
           // steps the imagery year instead of zooming; letting go of whichever
           // started it ends it
@@ -1732,13 +1779,6 @@ def _(anywidget, asyncio, traitlets):
             map.scrollZoom.disable();
             if (by === "mouse") map.dragPan.disable();
             tip.style.display = "none";
-            const r = mapEl.getBoundingClientRect();
-            const ll = map.unproject([x - r.left, y - r.top]);
-            const i = hexAt(ll);
-            if (i >= 0 && hattrs) {
-              model.set("pick", JSON.stringify({cell: hexes[i], lon: ll.lng, lat: ll.lat, admin: adminAt([x - r.left, y - r.top]), n: ++seq}));
-              model.save_changes();
-            }
             renderYear(); update();
           }
           function endHold(by) {
@@ -1751,13 +1791,6 @@ def _(anywidget, asyncio, traitlets):
             renderYear(); update();
             if (lastPt && map) showHexTip(lastPt);
           }
-          mapEl.addEventListener("pointerdown", (e) => {
-            if (e.button !== 0 || !e.isPrimary) return;
-            suppressClick = false;
-            holdAt = {x: e.clientX, y: e.clientY};
-            clearTimeout(holdT);
-            holdT = setTimeout(() => beginHold(holdAt.x, holdAt.y, "mouse"), HOLD_MS);
-          }, true);
           mapEl.addEventListener("pointermove", (e) => {
             lastPt = {x: e.clientX, y: e.clientY};
             if (holdT && holdAt && Math.hypot(e.clientX - holdAt.x, e.clientY - holdAt.y) > SLOP) { clearTimeout(holdT); holdT = null; holdAt = null; }
@@ -1919,13 +1952,17 @@ def _(anywidget, asyncio, traitlets):
             });
             map.on("moveend", sendView);
             map.on("zoomend", () => { update(); renderYear(); });
-            map.on("mousemove", (e) => { if (st.holding || holdT) return; showHexTip({x: e.originalEvent.clientX, y: e.originalEvent.clientY}); });
+            map.on("mousemove", (e) => {
+              if (holdT) return;
+              // over the imagery: the white outline follows the pointer, no tooltip
+              if (st.holding) { const i = hexAt(e.lngLat); if (i !== hover) { hover = i; update(); } return; }
+              showHexTip({x: e.originalEvent.clientX, y: e.originalEvent.clientY});
+            });
             map.on("mouseout", () => { tip.style.display = "none"; if (hover != null && hover >= 0) { hover = null; update(); } });
             map.on("click", (e) => {
               if (suppressClick) { suppressClick = false; return; }
               const i = hexAt(e.lngLat);
-              model.set("pick", JSON.stringify({cell: i >= 0 ? hexes[i] : null, lon: e.lngLat.lng, lat: e.lngLat.lat, admin: adminAt(e.point), n: ++seq}));
-              model.save_changes();
+              pickCell(i >= 0 ? hexes[i] : null, e.lngLat, e.point, st.holding);
             });
             map.on("error", (ev) => { if (ev && ev.error && ev.error.message && !/tile|404/i.test(ev.error.message)) say("map: " + ev.error.message); });
             new ResizeObserver(() => { try { map.resize(); } catch (e) {} fitCard(); }).observe(mapEl);

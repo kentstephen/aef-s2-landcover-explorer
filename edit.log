@@ -5,3 +5,8 @@ Running in a sandbox: /opt/homebrew/bin/uv run --isolated --no-project --compile
         ➜  URL: http://localhost:2811
 
 [W 260925 12:46:12 health:451] Neither nvidia-smi nor rocm-smi succeeded, cannot get GPU stats
+
+        Thanks for using marimo! 🌊🍃
+
+/Users/stephenk/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/multiprocessing/resource_tracker.py:400: UserWarning: resource_tracker: There appear to be 12 leaked semaphore objects to clean up at shutdown: {'/mp-2hqf_hqo', '/mp-l9axtf7_', '/mp-6mojfpy1', '/mp-1hrljqrl', '/mp-cj_uio0s', '/mp-hp3pg5zn', '/mp-zlkbf5gx', '/mp-m82pxxzd', '/mp-9luzrtxf', '/mp-puxtmp13', '/mp-1odlyzae', '/mp-o8kd0gw5'}
+  warnings.warn(
