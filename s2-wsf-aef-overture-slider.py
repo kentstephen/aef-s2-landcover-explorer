@@ -2446,7 +2446,19 @@ def _(anywidget, asyncio, traitlets):
           }
           function update() {
             if (ov) ov.setProps({layers: layers()});
-            if (ovS) ovS.setProps({layers: paired() ? [mkRaster("s2", cfg.s2_year, 14, null, true, null)] : []});
+            if (ovS) {
+              // the picked (and hovered) hexagon on the S2 side too, as the pair
+              // notebook draws it on both panes (Stephen, 2026-09-24)
+              const outS = [];
+              if (paired()) {
+                outS.push(mkRaster("s2", cfg.s2_year, 14, null, true, null));
+                const hS = on.hex ? outline("hover-l", hover, [255, 255, 255, 255], 2) : null;
+                if (hS) outS.push(hS);
+                const pS = cfg.hit ? outline("picked-l", cfg.hit, [255, 200, 40, 255], 3) : null;
+                if (pS) outS.push(pS);
+              }
+              ovS.setProps({layers: outS});
+            }
           }
           function labels(onL) {
             for (const m of [map, mapS]) {
@@ -2472,6 +2484,14 @@ def _(anywidget, asyncio, traitlets):
             mapS.addControl(ovS);
             mapS.on("load", () => { labels(labelsOn); update(); });
             mapS.on("move", () => { if (paired()) follow(mapS, map); });
+            // hover and click on the S2 side pick the same cell as on the data side
+            mapS.on("mousemove", (e) => { if (!on.hex) return; const h = cellAt(e.lngLat); if (h !== hover) { hover = h; update(); } });
+            mapS.on("mouseout", () => { if (hover) { hover = null; update(); } });
+            mapS.on("click", (e) => {
+              const h = on.hex ? cellAt(e.lngLat) : null;
+              model.set("pick", JSON.stringify({cell: h, lon: e.lngLat.lng, lat: e.lngLat.lat, admin: adminAt(map, map.project(e.lngLat)), n: ++seq}));
+              model.save_changes();
+            });
             map.on("move", () => { if (paired()) follow(map, mapS); });
             new ResizeObserver(() => { try { mapS.resize(); } catch (e) {} }).observe(mapElS);
           }
