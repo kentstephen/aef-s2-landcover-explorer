@@ -1373,7 +1373,7 @@ def _(anywidget, asyncio, time, traitlets):
         .at button{font:inherit;color:inherit}
         .at button:focus-visible,.at input:focus-visible{outline:2px solid var(--cool);outline-offset:2px}
         .at-top{position:absolute;left:12px;top:12px;z-index:6;display:flex;flex-direction:column;gap:8px;align-items:flex-start;max-width:calc(100% - 360px)}
-        .at-search{position:relative;display:flex;align-items:center;gap:8px;padding:0 12px;height:40px;width:270px}
+        .at-search{position:relative;z-index:2;display:flex;align-items:center;gap:8px;padding:0 12px;height:40px;width:270px}
         .at-search svg{flex:0 0 auto;opacity:.6}
         .at-search input{flex:1;min-width:0;background:none;border:0;color:var(--text);font:inherit;outline:none}
         .at-search input::placeholder{color:var(--muted)}
@@ -1398,7 +1398,12 @@ def _(anywidget, asyncio, time, traitlets):
         .at-cb:hover{background:var(--sel);color:var(--text)}
         .at-cb svg{transition:transform .15s}
         .collapsed .at-cb svg{transform:rotate(-90deg)}
-        .at-panel.collapsed .at-row:not(.keep){display:none}
+        .at-panel.collapsed{padding:2px 3px 2px 10px;gap:0;border-radius:10px}
+        .at-panel.collapsed .at-hd .t{font-size:12px}
+        .at-panel.collapsed .at-cb{width:22px;height:22px}
+        .at-hd .t .s,.at-panel.collapsed .at-hd .t .l{display:none}
+        .at-panel.collapsed .at-hd .t .s{display:inline}
+        .at-panel.collapsed .at-row{display:none}
         .at-yc .yr .at-cb{margin-left:auto;align-self:flex-start;margin-top:-4px;margin-right:-8px}
         .at-yc.collapsed{width:auto}
         .at-yc.collapsed .yr span{max-width:120px}
@@ -1614,8 +1619,12 @@ def _(anywidget, asyncio, time, traitlets):
           try { new ResizeObserver(styleWin).observe(win); } catch (e) {}
           function styleKey() {
             const y0 = hmeta.y0 || st.y0, y1 = hmeta.y1 || st.y1;
-            panelHd.querySelector(".t").textContent = map && map.getZoom() < HEXZ ? "Land cover" : "AlphaEarth change";
-            if (map && map.getZoom() < HEXZ) {
+            const out_ = map && map.getZoom() < HEXZ;
+            // folded, the short name (Stephen, 2026-09-25: "just can say aef change")
+            panelHd.querySelector(".t").innerHTML = out_ ? `<span class="l">Land cover</span><span class="s">Land cover</span>` : `<span class="l">AlphaEarth change</span><span class="s">AEF change</span>`;
+            // no hexagons zoomed out, so nothing to color (Stephen, 2026-09-25)
+            rFill.style.display = out_ ? "none" : "";
+            if (out_) {
               keyEl.innerHTML = `land cover, ESA WorldCover 2021: ` + (cfg.wc_key || []).map(([nm, hx]) => `<span style="display:inline-flex;align-items:center;gap:4px"><i style="width:10px;height:10px;border-radius:2px;background:#${hx}"></i>${esc(nm)}</span>`).join(" ");
               return;
             }
