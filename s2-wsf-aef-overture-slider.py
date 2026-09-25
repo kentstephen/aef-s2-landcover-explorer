@@ -179,7 +179,9 @@ def _(mo):
     most, and the window slider; **S2**, the Sentinel-2 mosaic on the left of
     a divider you drag across the map, the data on its right, the footprints
     on both sides, with its year (`[` `]`, `F` for first or last) and a gamma
-    slider. **FIND** flies to a place. `X` fills the browser window, `Esc`
+    slider. **VIEW** next to it switches between that divider (**slider**)
+    and two maps side by side on one camera (**pair**: S2 alone on the left,
+    the data on the right). **FIND** flies to a place. `X` fills the browser window, `Esc`
     brings it back.
 
     **Click** a footprint for its source, the date the source last touched
@@ -1842,6 +1844,13 @@ def _(anywidget, asyncio, traitlets):
           const mapEl = document.createElement("div");
           mapEl.className = "sp-map";
           mapEl.style.cssText = "position:absolute;inset:0";
+          // PAIR (Stephen, 2026-09-24: "next to the s2 info ... a toggle
+          // between pair and slider"): a second map on the left half draws the
+          // S2 mosaic alone, the data map takes the right half, one camera.
+          // Made the first time PAIR is picked
+          const mapElS = document.createElement("div");
+          mapElS.className = "sp-map sp-map-s2";
+          mapElS.style.cssText = "position:absolute;top:0;bottom:0;left:0;width:50%;display:none;border-right:2px solid #fff;box-sizing:border-box";
           const head = document.createElement("div");
           head.className = "sp-head";
           head.style.cssText = "position:absolute;left:8px;top:8px;z-index:5;display:flex;flex-direction:column;gap:.18rem;align-items:flex-start;" +
@@ -1867,7 +1876,7 @@ def _(anywidget, asyncio, traitlets):
             placeSwipe(); update();
           });
           swipe.addEventListener("pointerup", (e) => { try { swipe.releasePointerCapture(e.pointerId); } catch (err) {} });
-          pane.append(mapEl, swipe, head);
+          pane.append(mapElS, mapEl, swipe, head);
           const strip = document.createElement("div");
           const stripCss = "display:flex;flex-direction:column;gap:.25rem;padding:.35rem .4rem;background:#fff;color:#222";
           strip.style.cssText = stripCss;
@@ -1893,6 +1902,8 @@ def _(anywidget, asyncio, traitlets):
           let s2scale = Number(cfg.s2_scale) || 1;
           let y0 = cfg.aef_from, y1 = cfg.aef_to;
           let on = Object.assign({bld: true, wsf: false, hex: false, s2: false}, cfg.layers || {});
+          let map = null, ov = null, hover = null;
+          let mapS = null, ovS = null, syncing = false;  // PAIR's S2 map (below)
           const send = (act) => {
             model.set("ctl", JSON.stringify({act, on, s2y, s2scale, fill, bfill, y0, y1, labels: labelsOn, n: Date.now()}));
             model.save_changes();
@@ -2046,12 +2057,18 @@ def _(anywidget, asyncio, traitlets):
           sc.addEventListener("change", scRelease);
           scr.addEventListener("dblclick", (e) => { e.preventDefault(); s2scale = 1; styleSc(); scRelease(); });
           try { new ResizeObserver(styleSc).observe(scr); } catch (e) {}
+          let layout = cfg.layout === "pair" ? "pair" : "slider";
+          const gLayout = mkGroup(head, "view", [
+            {value: "slider", label: "slider", title: "one map: S2 left of a divider you drag, the data right of it"},
+            {value: "pair", label: "pair", title: "two maps side by side, one camera: S2 on the left, the data on the right"},
+          ], () => layout, (v) => { layout = v; applyLayout(); }, "layout", "sp-layout");
           // which rows show: one per layer that is on
           const rows = () => {
             rowBld.style.display = on.bld ? "" : "none";
             rowHex.style.display = on.hex ? "" : "none";
             rowS2.style.display = on.s2 ? "" : "none";
             gLayers.style();
+            applyLayout();
             setTimeout(() => { styleAef(); styleS2(); styleSc(); }, 0);
           };
           rows();
@@ -2335,7 +2352,6 @@ def _(anywidget, asyncio, traitlets):
           });
 
           // ---- the layers ----------------------------------------------------
-          let map = null, ov = null, hover = null;
           const slot = () => { const want = cfg.labels_slot || "watername_ocean"; const st = map && map.getStyle && map.getStyle(); if (!st || !st.layers || st.layers.some((x) => x.id === want)) return want; const l = st.layers.find((x) => x.type === "symbol"); return (l && l.id) || want; };
           const ring = (h) => { try { return cellToBoundary(h, true); } catch (e) { return null; } };
           const ADMIN = ["region", "county"];
@@ -2387,7 +2403,7 @@ def _(anywidget, asyncio, traitlets):
             return map.unproject([swipeF * w, h / 2]).lng;
           };
           const clipTo = (side) => {
-            if (!on.s2) return {};
+            if (!on.s2 || paired()) return {};
             const x = swipeLon();
             if (x == null) return {};
             const b = side === "left" ? [x - 360, -85, x, 85] : [x, -85, x + 360, 85];
@@ -2395,12 +2411,12 @@ def _(anywidget, asyncio, traitlets):
           };
           function layers() {
             const out = [];
-            swipe.style.display = on.s2 ? "" : "none";
+            swipe.style.display = on.s2 && !paired() ? "" : "none";
             // bottom to top: S2, hexagons, WSF raster, footprints, the rings. The
             // raster is above the hexagons (Stephen, 2026-09-24: "wsf has a big
             // building here i cant see"): its pixels are only where something is
             // built, so the hexagons show through everywhere else
-            out.push(mkRaster("s2", cfg.s2_year, 14, null, !!on.s2, clipTo("left")));
+            out.push(mkRaster("s2", cfg.s2_year, 14, null, !!on.s2 && !paired(), clipTo("left")));
             if (on.hex && dataObj && hexZoomOk()) out.push(new H3HexagonLayer({
               ...clipTo("right"),
               id: "hexes", data: {length: N},
@@ -2426,12 +2442,47 @@ def _(anywidget, asyncio, traitlets):
             if (pk) out.push(pk);
             return out;
           }
-          function update() { if (ov) ov.setProps({layers: layers()}); }
+          function update() {
+            if (ov) ov.setProps({layers: layers()});
+            if (ovS) ovS.setProps({layers: paired() ? [mkRaster("s2", cfg.s2_year, 14, null, true, null)] : []});
+          }
           function labels(onL) {
-            if (!map || !map.isStyleLoaded()) return;
-            const st = map.getStyle();
-            if (!st || !st.layers) return;
-            st.layers.forEach((l) => { if (l.layout && l.layout["text-field"] !== undefined) map.setLayoutProperty(l.id, "visibility", onL ? "visible" : "none"); });
+            for (const m of [map, mapS]) {
+              if (!m || !m.isStyleLoaded()) continue;
+              const st = m.getStyle();
+              if (!st || !st.layers) continue;
+              st.layers.forEach((l) => { if (l.layout && l.layout["text-field"] !== undefined) m.setLayoutProperty(l.id, "visibility", onL ? "visible" : "none"); });
+            }
+          }
+          // ---- PAIR: the S2 map on the left, the camera shared -----------------
+          function paired() { return !!on.s2 && layout === "pair"; }
+          const follow = (a, b) => {
+            if (syncing || !a || !b) return;
+            syncing = true;
+            try { b.jumpTo({center: a.getCenter(), zoom: a.getZoom(), bearing: a.getBearing(), pitch: a.getPitch()}); }
+            finally { syncing = false; }
+          };
+          function ensureS2Map() {
+            if (mapS || !map) return;
+            mapS = new maplibregl.Map({container: mapElS, style: STYLE, center: map.getCenter(), zoom: map.getZoom(), attributionControl: false});
+            mapS.keyboard.disable();
+            ovS = new MapboxOverlay({interleaved: true, layers: [], onError: (e) => say("deck: " + (e && e.message ? e.message : e))});
+            mapS.addControl(ovS);
+            mapS.on("load", () => { labels(labelsOn); update(); });
+            mapS.on("move", () => { if (paired()) follow(mapS, map); });
+            map.on("move", () => { if (paired()) follow(map, mapS); });
+            new ResizeObserver(() => { try { mapS.resize(); } catch (e) {} }).observe(mapElS);
+          }
+          function applyLayout() {
+            const p = paired();
+            mapEl.style.left = p ? "50%" : "0";
+            mapElS.style.display = p ? "" : "none";
+            if (p) ensureS2Map();
+            if (gLayout) gLayout.style();
+            setTimeout(() => {
+              try { if (map) map.resize(); if (mapS && p) { mapS.resize(); follow(map, mapS); } } catch (e) {}
+              update(); sendView();
+            }, 30);
           }
           let seq = 0, lastView = "";
           function sendView() {
@@ -2463,7 +2514,7 @@ def _(anywidget, asyncio, traitlets):
             map.on("load", () => {
               // the basemap draws its own footprints; ours are the data (Stephen, 2026-09-24: "basemap footprints and our data footprints")
               (map.getStyle().layers || []).forEach((l) => { if (l["source-layer"] === "building" || /^building/.test(l.id)) map.setLayoutProperty(l.id, "visibility", "none"); });
-              labels(labelsOn); adminSync(map); update(); sendView();
+              labels(labelsOn); adminSync(map); applyLayout();
             });
             map.on("moveend", sendView);
             map.on("zoom", () => update());
@@ -2478,7 +2529,7 @@ def _(anywidget, asyncio, traitlets):
             map.on("error", (ev) => { if (ev && ev.error && ev.error.message) say("map: " + ev.error.message); });
             new ResizeObserver(() => { try { map.resize(); } catch (e) {} }).observe(mapEl);
             window.__spTiles = tstat;
-            window.__spMaps = () => [map];
+            window.__spMaps = () => [map, mapS].filter(Boolean);
             window.__spLayers = () => ({right: layers().filter((l) => l.props.visible !== false).map((l) => l.id), N, res, on: Object.assign({}, on), polys: polys ? polys.numRows : 0});
           }
           let pendingLoad = null, needCells = false;

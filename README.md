@@ -44,7 +44,9 @@ jumped, or the dataset that drew it. Under the footprints, layers you switch
 on and off: the WSF raster at 10 m, the H3 hexagons of the pair (AlphaEarth
 change over the year window, finer as you zoom, res 12 from zoom 14.6), and
 the Sentinel-2 mosaic on the left of a divider you drag across the map, the
-data on its right, the footprints on both sides. A click on a footprint gives
+data on its right, the footprints on both sides; a view toggle next to the
+S2 controls swaps the divider for two maps side by side on one camera (S2
+alone on the left, the data on the right). A click on a footprint gives
 its source, its WSF pixels and their first year, and AlphaEarth's year; a
 click on bare ground says what WSF saw there that Overture has no building
 for. Keys: `B` `W` `A` `S` switch the layers, `Q` steps the building fill,
