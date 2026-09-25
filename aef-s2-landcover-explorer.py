@@ -1940,6 +1940,28 @@ def _(anywidget, asyncio, time, traitlets):
           // change repaints without a round trip. A tile from an older frame
           // keeps its last picture until the new frame's tile replaces it.
           const unz = async (u8) => new Uint32Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
+          // the tile's pixels are hard steps along every slanted hexagon edge;
+          // this bitmap filters its own four texels, flat inside a texel and
+          // blended across one screen pixel at each texel boundary ("sharp
+          // bilinear"), premultiplied so an edge next to no hexagon does not
+          // go dark
+          class SmoothBitmapLayer extends BitmapLayer {
+            getShaders() {
+              const s = super.getShaders();
+              s.fs = s.fs.replace("vec4 bitmapColor = texture(bitmapTexture, uv);", `
+                ivec2 tsz = textureSize(bitmapTexture, 0);
+                vec2 tp = uv * vec2(tsz) - 0.5, t0 = floor(tp);
+                vec2 tf = clamp((tp - t0 - 0.5) / max(fwidth(tp), vec2(1e-4)) + 0.5, 0.0, 1.0);
+                ivec2 ta = clamp(ivec2(t0), ivec2(0), tsz - 1), tb = clamp(ivec2(t0) + 1, ivec2(0), tsz - 1);
+                vec4 c00 = texelFetch(bitmapTexture, ta, 0), c10 = texelFetch(bitmapTexture, ivec2(tb.x, ta.y), 0);
+                vec4 c01 = texelFetch(bitmapTexture, ivec2(ta.x, tb.y), 0), c11 = texelFetch(bitmapTexture, tb, 0);
+                c00.rgb *= c00.a; c10.rgb *= c10.a; c01.rgb *= c01.a; c11.rgb *= c11.a;
+                vec4 bitmapColor = mix(mix(c00, c10, tf.x), mix(c01, c11, tf.x), tf.y);
+                bitmapColor.rgb /= max(bitmapColor.a, 1e-4);`);
+              return s;
+            }
+          }
+          SmoothBitmapLayer.layerName = "SmoothBitmapLayer";
           const ptimes = [];  // per hexagon tile painted, for the tests
           function paintTile(d) {
             if (d.seq !== hmeta.seq || !hcol32) return d.canvas || null;
@@ -1968,7 +1990,7 @@ def _(anywidget, asyncio, time, traitlets):
               const im = p.data ? paintTile(p.data) : null;
               if (!im) return null;
               const {west, south, east, north} = p.tile.bbox;
-              return new BitmapLayer(p, {data: null, image: im, bounds: [west, south, east, north], textureParameters: {minFilter: "linear", magFilter: "nearest"}});
+              return new SmoothBitmapLayer(p, {data: null, image: im, bounds: [west, south, east, north], textureParameters: {minFilter: "nearest", magFilter: "nearest"}});
             },
           });
           const ring = (h) => { try { return cellToBoundary(h, true); } catch (e) { return null; } };
