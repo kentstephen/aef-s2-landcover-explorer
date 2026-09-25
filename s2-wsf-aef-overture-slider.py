@@ -2233,7 +2233,10 @@ def _(anywidget, asyncio, traitlets):
           });
           const say = (t) => {
             status.textContent = t || "";
-            if (cfg.minimal) status.hidden = !/folding|reading|failed|zoom in|no match|search:/.test(t || "");  // only while working or failing; the finished tallies stay in the kernel (Stephen, 2026-09-24: "get rid of it")
+            // only what needs attention: a failure, or "zoom in" (Stephen,
+            // 2026-09-24: "i dont want to see this printout unless its an error
+            // i need to know"); progress and the finished tallies stay hidden
+            if (cfg.minimal) status.hidden = !/failed|error|zoom in|no match|search:|timed? ?out|^(deck|map|footprints|load|boot|grab \w+|\w+ tile):/i.test(t || "");
           };
           const renderLegend = () => {
             legend.replaceChildren();
