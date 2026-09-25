@@ -169,7 +169,7 @@ def _(os, tempfile):
     # the window holds (Stephen, 2026-09-04).
     S2_YEARS = (2022, 2023, 2024, 2025)
     AEF_YEARS_ALL = tuple(range(2017, 2026))
-    AEF_FROM0, AEF_TO0 = 2017, 2025
+    AEF_FROM0, AEF_TO0 = 2022, 2025  # the slider's window: four years read, not nine (widen with - = _ +)
     S2_YEAR0 = 2022
     # the S2 mosaic's opening `scale`: a gain on the TCI bytes (1 = as served)
     S2_SCALE0 = 1.0
@@ -1839,6 +1839,19 @@ def _(anywidget, asyncio, traitlets):
         .at-col.cur .b{background:var(--deep)}
         .at-col.cur .y{color:var(--text);font-weight:600}
         .at-col.off{opacity:.35;cursor:default}
+        .at-win{position:relative;width:170px;height:28px;flex:0 0 auto}
+        .at-win input{position:absolute;left:0;top:0;width:100%;height:22px;margin:0;background:none;pointer-events:none;-webkit-appearance:none;appearance:none}
+        .at-win input:focus{outline:none}
+        .at-win input::-webkit-slider-runnable-track{background:none;height:22px}
+        .at-win input::-moz-range-track{background:none;height:22px}
+        .at-win input::-webkit-slider-thumb{pointer-events:auto;-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:4px;border-radius:50%;background:var(--text);border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3);cursor:grab}
+        .at-win input::-moz-range-thumb{pointer-events:auto;width:14px;height:14px;border-radius:50%;background:var(--text);border:2px solid #fff;cursor:grab}
+        .at-win .trk{position:absolute;left:8px;right:8px;top:9px;height:4px;background:rgba(24,32,40,.18);border-radius:2px}
+        .at-win .spn{position:absolute;top:9px;height:4px;background:var(--text);border-radius:2px}
+        .at-win .tks{position:absolute;left:8px;right:8px;top:19px;display:flex;justify-content:space-between;font-size:9px;color:var(--muted);line-height:1}
+        .at-win .tks span{width:0;display:flex;justify-content:center}
+        .at-win .tks i{font-style:normal}
+        .at-wtxt{font-size:12.5px;white-space:nowrap}
         .at-mid{display:flex;flex-direction:column;gap:2px;min-width:0}
         .at-slider{width:calc(100% - 100% / 10);margin:0 calc(100% / 20);accent-color:var(--deep);cursor:pointer;height:18px}
         .at-yr{display:flex;flex-direction:column;align-items:flex-start;justify-content:flex-end;min-width:0}
@@ -1904,6 +1917,15 @@ def _(anywidget, asyncio, traitlets):
         // the year), grey outlines for what already stood in 2016, blue for
         // "the map and WSF disagree". Nothing hangs on red vs green.
         const DEEP = [184, 92, 0], AMBER = [230, 159, 0], GREY = [96, 106, 116], WHITE = [255, 255, 255], COOL = [0, 114, 178];
+        // the year a building (or WSF pixel) was first seen built: ONE
+        // sequential ramp, light 2016 to dark 2025, each year its own colour
+        // (Stephen, 2026-09-24: "a perceptually uniform one-way color ramp for
+        // the years ... something other than viridis", which the AlphaEarth
+        // hexagons use). YlOrBr less its near-white end: the slider's "WSF
+        // grew" ramp, a lightness ramp on the orange leg a protanope keeps
+        const YR_STOPS = ["fee391", "fec44f", "fe9929", "ec7014", "cc4c02", "993404", "662506"].map((h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)));
+        const yrCol = (y) => { let t = Math.max(0, Math.min(1, (y - 2016) / 9)) * (YR_STOPS.length - 1); const i = Math.min(YR_STOPS.length - 2, Math.floor(t)), f = t - i; return YR_STOPS[i].map((v, j) => Math.round(v + (YR_STOPS[i + 1][j] - v) * f)); };
+        const yrCss = (a) => Array.from({length: 10}, (_, i) => rgba(yrCol(2016 + i), a)).join(",");
         const SRC = [[0, 114, 178], [230, 159, 0], [204, 121, 167], [86, 180, 233]], OTHER = [150, 156, 162];
         const MONTH = ["", "Jan", "Jul"];
         const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
@@ -1962,7 +1984,7 @@ def _(anywidget, asyncio, traitlets):
           // colour (Q steps through it); the AlphaEarth fill; the timeline's year
           const st = {
             on: Object.assign({bld: true, wsf: false, hex: false, img: false}, cfg.layers0 || {}),
-            bfill: "wyear", Y: YMAX, playing: false, gmode: "when", y0: 2017, y1: 2025,
+            bfill: "wyear", Y: YMAX, playing: false, gmode: "when", y0: cfg.aef_from || 2022, y1: cfg.aef_to || 2025,
             imgYear: S2Y[S2Y.length - 1], labels: true, s2scale: Number(cfg.s2_scale) || 1,
             fit: !!cfg.fit, picked: -1, flip: null,
           };
@@ -2001,10 +2023,41 @@ def _(anywidget, asyncio, traitlets):
           const styleBfill = segOf(rBld, BFILLS, (k) => k === st.bfill, (k) => setBfill(k));
           const rHex = rowOf("AlphaEarth");
           const styleHex = segOf(rHex, [["when", "Year it changed", "the year the ground first changed clearly"], ["much", "How much", "how much the ground changed over the years"]], (k) => k === st.gmode, (k) => { st.gmode = k; recolorHex(); styleRows(); renderDock(); update(); });
+          // the window (the slider's): the years the hexagons read. "How much"
+          // is the change between its two ends; "year it changed" can only
+          // name a year inside it. Drag either end; it rereads on release
+          const aefYears = cfg.aef_years || [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025];
+          const win = el_("span", "at-win");
+          const wTrk = el_("span", "trk"), wSpn = el_("span", "spn"), wTks = el_("span", "tks");
+          for (const y of aefYears) wTks.appendChild(el_("span", "", `<i>\u2019${String(y).slice(-2)}</i>`));
+          const mkR = () => { const r = el_("input"); r.type = "range"; r.min = 0; r.max = aefYears.length - 1; r.step = 1; r.title = "the years AlphaEarth is read over: drag either end, release to reread (- = and _ + step them)"; return r; };
+          const rFrom = mkR(), rTo = mkR();
+          const wTxt = el_("span", "at-wtxt");
+          win.append(wTrk, wSpn, wTks, rFrom, rTo);
+          rHex.append(win, wTxt);
+          function styleWin() {
+            const i0 = Math.max(0, aefYears.indexOf(st.y0)), i1 = Math.max(0, aefYears.indexOf(st.y1)), n = Math.max(1, aefYears.length - 1);
+            rFrom.value = i0; rTo.value = i1;
+            rFrom.style.zIndex = i0 === n ? 3 : 2; rTo.style.zIndex = i1 === 0 ? 3 : 2;
+            const usable = (win.clientWidth || 170) - 16;
+            wSpn.style.left = (8 + usable * i0 / n) + "px"; wSpn.style.width = (usable * (i1 - i0) / n) + "px";
+            wTxt.textContent = `${st.y0} to ${st.y1}`;
+          }
+          const onDrag = (which) => {
+            let a = Number(rFrom.value), b = Number(rTo.value);
+            if (a >= b) { if (which === "from") a = b - 1; else b = a + 1; }
+            a = Math.max(0, a); b = Math.min(aefYears.length - 1, b);
+            st.y0 = aefYears[a]; st.y1 = aefYears[b]; styleWin();
+          };
+          let winSent = [st.y0, st.y1];
+          const winRelease = () => { if (st.y0 !== winSent[0] || st.y1 !== winSent[1]) { winSent = [st.y0, st.y1]; if (st.Y < st.y0 + 1 || st.Y > YMAX) st.Y = YMAX; send("aef"); renderDock(); } };
+          rFrom.addEventListener("input", () => onDrag("from")); rTo.addEventListener("input", () => onDrag("to"));
+          rFrom.addEventListener("change", winRelease); rTo.addEventListener("change", winRelease);
+          try { new ResizeObserver(styleWin).observe(win); } catch (e) {}
           const rImg = rowOf("Imagery");
           const styleImgRow = segOf(rImg, S2Y.map((y) => [y, String(y), "the Sentinel-2 mosaic of " + y + " ([ ] step, F first or last)"]), (k) => k === st.imgYear, (k) => { stopFlip(true); st.imgYear = k; styleRows(); update(); });
           function styleRows() {
-            styleLayers(); styleBfill(); styleHex(); styleImgRow();
+            styleLayers(); styleBfill(); styleHex(); styleImgRow(); styleWin();
             rBld.style.display = st.on.bld ? "" : "none";
             rHex.style.display = st.on.hex ? "" : "none";
             rImg.style.display = st.on.img ? "" : "none";
@@ -2045,7 +2098,7 @@ def _(anywidget, asyncio, traitlets):
           const about = el_("div", "at-about");
           about.innerHTML = `<div class="box at-glass">
             <h2>Buildings on the map, checked against the ground</h2>
-            <p>Turn the layers on and off in the panel at the top left. <b>Buildings</b>: the footprints from Overture Maps, each lit by when the World Settlement Footprint tracker (WSF) first read the ground under it as built-up. WSF looks twice a year, July 2016 to January 2026, at 10 m. Deep amber is the year on the timeline, lighter amber the years before it, a grey outline was already standing in 2016. Zoomed out, the same colours paint WSF's built-up ground. You can switch the date to AlphaEarth's instead.</p>
+            <p>Turn the layers on and off in the panel at the top left. <b>Buildings</b>: the footprints from Overture Maps, each lit by when the World Settlement Footprint tracker (WSF) first read the ground under it as built-up. WSF looks twice a year, July 2016 to January 2026, at 10 m. Each year has its own colour, light yellow for 2016 to dark brown for 2025; a grey outline was already standing in 2016; buildings from after the timeline's year are not drawn yet. Zoomed out, the same colours paint WSF's built-up ground. You can switch the date to AlphaEarth's instead.</p>
             <p><b>AlphaEarth</b>: describes every 10 m of ground with 64 numbers a year, 2017 to 2025. When those numbers jump from one year to the next by more than they do on ground WSF says stayed the same (the quiet level), the ground changed that year: building, clearing, water, fields. Hexagons show the year it changed, or how much.</p>
             <p>The buildings can also be coloured for a <b>map check</b>: buildings on the map WSF never read as built-up (blue), and built-up ground 20 m or more from any building on the map (amber); or by <b>source</b>, the dataset each came from.</p>
             <p><b>Imagery</b> adds the Sentinel-2 yearly mosaic (2022 to 2025). Click something that changed in 2023 to 2025 and the imagery flips between the year before and the year after on its own.</p>
@@ -2124,7 +2177,6 @@ def _(anywidget, asyncio, traitlets):
           }
           // the year ramp shared by every layer: deep amber for the year
           // shown, lighter for the years before, nothing for later years
-          const rampA = (y, Y) => { const t = (y - 2016) / Math.max(1, Y - 1 - 2016); return 70 + 100 * t; };
           function growthLUT(Y) {
             const lut = new Uint8ClampedArray(256 * 4);
             for (let k = 1; k <= 20; k++) {
@@ -2132,8 +2184,7 @@ def _(anywidget, asyncio, traitlets):
               let c = null, a = 0;
               if (k === 1) { c = GREY; a = 55; }
               else if (yr > Y) a = 0;
-              else if (yr === Y) { c = DEEP; a = 235; }
-              else { c = AMBER; a = rampA(yr, Y); }
+              else { c = yrCol(yr); a = 225; }
               if (c) { lut[o] = c[0]; lut[o + 1] = c[1]; lut[o + 2] = c[2]; lut[o + 3] = a; }
             }
             return lut;
@@ -2175,8 +2226,7 @@ def _(anywidget, asyncio, traitlets):
                 if (y === -1) put(L, i, base, img ? 120 : 110);
                 else if (y === 0) put(L, i, base, img ? 70 : 60);
                 else if (y > Y) { /* later: not drawn */ }
-                else if (y === Y) { put(F, i, DEEP, 225 * fillK); put(L, i, img ? [255, 190, 90] : DEEP, 255); }
-                else { const a = rampA(y, Y); put(F, i, AMBER, a * fillK); put(L, i, AMBER, img ? 230 : Math.min(255, a + 70)); }
+                else { const c = yrCol(y); put(F, i, c, 215 * fillK); put(L, i, c, 255); }
               } else if (st.bfill === "check") {
                 if (attrs[4 * i] === 0) { put(F, i, COOL, 110 * fillK); put(L, i, img ? [120, 200, 255] : COOL, 255); }
                 else put(L, i, base, img ? 90 : 80);
@@ -2268,7 +2318,7 @@ def _(anywidget, asyncio, traitlets):
 
           // ---- the dock ---------------------------------------------------------------------
           let dockKind = null, colsEl = null, yrEl = null, footEl = null, playBtn = null, sliderEl = null;
-          const minY = () => { const k = tlKind(); return k === "hex" || (k === "bld" && st.bfill === "ayear") ? 2018 : YMIN; };
+          const minY = () => { const k = tlKind(); return k === "hex" ? (hmeta.y0 || st.y0) + 1 : (k === "bld" && st.bfill === "ayear") ? 2018 : YMIN; };
           function buildTimeline() {
             dock.innerHTML = "";
             const g = el_("div", "at-grow");
@@ -2316,7 +2366,7 @@ def _(anywidget, asyncio, traitlets):
               const y = Number(col.dataset.y), v = c ? (c.years[y] || 0) : 0;
               const bEl = col.querySelector(".b");
               bEl.style.height = c ? (v ? Math.max(3, 52 * v / max) : 2) + "px" : "2px";
-              bEl.style.background = c && c.kind === "hex" && y >= 2018 ? `rgba(${virYear(y).join(",")},${y <= st.Y ? 1 : 0.25})` : "";
+              bEl.style.background = c && c.kind === "hex" ? (y >= 2018 ? `rgba(${virYear(y).join(",")},${y <= st.Y ? 1 : 0.25})` : "") : rgba(yrCol(y), y <= st.Y ? 1 : 0.25);
               col.classList.toggle("cur", y === st.Y);
               col.classList.toggle("past", y < st.Y);
               col.classList.toggle("off", y < minY());
@@ -2326,7 +2376,7 @@ def _(anywidget, asyncio, traitlets):
             const v = c ? (c.years[st.Y] || 0) : null;
             let head = "", sub = "";
             if (tlKind() === "hex") {
-              head = st.Y < 2018 ? "AlphaEarth starts in 2017" : `between the ${st.Y - 1} and ${st.Y} pictures`;
+              head = st.Y < minY() ? `AlphaEarth read ${hmeta.y0 || st.y0} to ${hmeta.y1 || st.y1} (- = _ + to widen)` : `between the ${st.Y - 1} and ${st.Y} pictures`;
               sub = !c ? (map && map.getZoom() < HEXZ ? `Zoom in to zoom ${HEXZ} or closer` : "Reading AlphaEarth…") : `${fmt(v)} of ${fmt(c.total + c.quiet)} hexagons changed clearly`;
             } else if (!c) { head = wsfYearWindow(st.Y); sub = tlKind() === "wait" ? `Buildings from zoom ${BLDZ}: zoom in, or turn on WSF` : "Reading…"; }
             else if (c.kind === "bld") {
@@ -2346,7 +2396,7 @@ def _(anywidget, asyncio, traitlets):
               footEl.innerHTML = "";
               const keys = el_("div", "at-keys");
               const aef = st.bfill === "ayear" && tlKind() === "bld";
-              keys.innerHTML = key(DEEP, .9, `${aef ? "changed" : "built"} in ${st.Y}`) + key(AMBER, .5, "earlier") + key(GREY, .8, aef ? "no clear change" : "standing by 2016", true)
+              keys.innerHTML = `<span class="at-key">${aef ? "changed" : "first seen built"} 2016 <i class="at-ramp" style="width:140px;background:linear-gradient(90deg,${yrCss(1)})"></i> 2025</span>` + key(GREY, .8, aef ? "no clear change" : "standing by 2016", true)
                 + (st.on.bld && !bldUp() ? `<span class="at-key">buildings from zoom ${BLDZ}</span>` : "");
               footEl.append(keys);
             }
@@ -2485,7 +2535,9 @@ def _(anywidget, asyncio, traitlets):
               if (!s2Shown.includes(st.imgYear)) s2Shown = s2Shown.concat([st.imgYear]).slice(-4);
               for (const y of s2Shown) out.push(s2Layer(y));
             }
-            out.push(growthLayer());
+            // bottom to top as in the slider: S2, the AlphaEarth hexagons, the
+            // WSF raster, the footprints (Stephen, 2026-09-24: WSF drawn over
+            // the hexagons, so its built-up pixels show through)
             if (st.on.hex && hcol && map && map.getZoom() >= HEXZ) out.push(new H3HexagonLayer({
               id: "hexes", data: {length: N}, getHexagon: (_, {index}) => hexes[index],
               getFillColor: (_, {index}) => [hcol[4 * index], hcol[4 * index + 1], hcol[4 * index + 2], hcol[4 * index + 3]],
@@ -2494,6 +2546,7 @@ def _(anywidget, asyncio, traitlets):
               // faint over the imagery, fainter while a before and after flips: the picture is the point then
               opacity: st.flip ? 0.2 : (st.on.img ? 0.55 : 1),
             }));
+            out.push(growthLayer());
             if (st.on.bld && st.bfill === "check" && gapImg && meta.box && bldUp()) out.push(new BitmapLayer({id: "gap-" + gapSeq, image: gapImg, bounds: meta.box, opacity: st.on.img ? 0.7 : 1, beforeId: slot()}));
             if (st.on.bld && bldUp() && fillVec) out.push(new GeoArrowPolygonLayer({
               id: "fp-" + polysSeq, data: polys, filled: true, stroked: true,
@@ -2543,7 +2596,7 @@ def _(anywidget, asyncio, traitlets):
               h += `<h3>${c.what ? c.what[0].toUpperCase() + c.what.slice(1) : "A building on the map"}</h3>`;
               const k = c.wk || 0;
               if (k === 1) h += row(rgba(GREY, .9), `WSF: already standing when its record opens, July 2016.`);
-              else if (k >= 2) { h += row(rgba(DEEP, 1), `WSF first saw it built <b>${wsfWindow(k)}</b>.`); changeY = wsfYear(k); changeWhy = "WSF"; }
+              else if (k >= 2) { h += row(rgba(yrCol(wsfYear(k)), 1), `WSF first saw it built <b>${wsfWindow(k)}</b>.`); changeY = wsfYear(k); changeWhy = "WSF"; }
               else h += row(rgba(COOL, 1), `WSF has <b>never</b> read it as built-up. It may be new, small, or not there.`);
               if (c.npx) h += `<div class="sub">${c.nbuilt} of the ${c.npx} WSF pixels under it are built-up</div>`;
               const a = c.acode;
@@ -2567,7 +2620,7 @@ def _(anywidget, asyncio, traitlets):
             } else if (c.kind === "hex") {
               h += `<h3>This hexagon of ground</h3>`;
               const lvl = c.level == null ? null : (c.level >= 0.75 ? "a lot" : c.level >= 0.4 ? "a fair amount" : c.level >= 0.15 ? "a little" : "barely");
-              if (c.when >= 2018) { h += row(rgba(DEEP, 1), `AlphaEarth: the ground first changed clearly between its <b>${c.when - 1} and ${c.when}</b> pictures${lvl ? `, and ${lvl} over ${c.y0} to ${c.y1}` : ""}.`); changeY = c.when; changeWhy = "AlphaEarth"; }
+              if (c.when >= 2018) { h += row(`rgb(${virYear(c.when).join(",")})`, `AlphaEarth: the ground first changed clearly between its <b>${c.when - 1} and ${c.when}</b> pictures${lvl ? `, and ${lvl} over ${c.y0} to ${c.y1}` : ""}.`); changeY = c.when; changeWhy = "AlphaEarth"; }
               else if (c.when === -1) h += row(rgba(GREY, .9), `AlphaEarth: no year stood out${lvl ? `; it moved ${lvl} over ${c.y0} to ${c.y1}` : ""}. Every year-to-year step is under the quiet level.`);
               else h += row("rgba(24,32,40,.25)", `AlphaEarth: no data here.`);
               h += spark(c.steps, c.step_years, c.D0);
@@ -2690,8 +2743,8 @@ def _(anywidget, asyncio, traitlets):
               else if (st.on.hex && n < 2) { st.gmode = n ? "much" : "when"; recolorHex(); styleRows(); renderDock(); update(); }
               else if (st.on.bld && BFILLS[n]) setBfill(BFILLS[n][0]);
             }
-            else if (k === "-" || k === "=") { const v = Math.max(2017, Math.min(hi - 1, lo + (k === "=" ? 1 : -1))); if (v !== lo) { st.y0 = v; send("aef"); note(`AlphaEarth years ${st.y0} to ${st.y1}`, 1800); } }
-            else if (k === "_" || k === "+") { const v = Math.max(lo + 1, Math.min(2025, hi + (k === "+" ? 1 : -1))); if (v !== hi) { st.y1 = v; send("aef"); note(`AlphaEarth years ${st.y0} to ${st.y1}`, 1800); } }
+            else if (k === "-" || k === "=") { const v = Math.max(2017, Math.min(hi - 1, lo + (k === "=" ? 1 : -1))); if (v !== lo) { st.y0 = v; winSent = [st.y0, st.y1]; styleWin(); send("aef"); } }
+            else if (k === "_" || k === "+") { const v = Math.max(lo + 1, Math.min(2025, hi + (k === "+" ? 1 : -1))); if (v !== hi) { st.y1 = v; winSent = [st.y0, st.y1]; styleWin(); send("aef"); } }
             else if (k === "l" || k === "L") { st.labels = !st.labels; labels(st.labels); swLab.sty(); send("labels"); }
             else if (k === "x" || k === "X") { st.fit = !st.fit; sizes(); }
             else if (k === "/") gc.focus();
