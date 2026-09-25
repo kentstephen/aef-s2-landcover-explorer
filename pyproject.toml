@@ -1,7 +1,7 @@
 [project]
-name = "s2-wsf-aef-overture-pair"
+name = "aef-landcover-settlements"
 version = "0.1.0"
-description = "S2 / WSF / AEF / Overture pair notebook: settlement growth on one H3 grid, two maps, one camera."
+description = "AlphaEarth embeddings read against Overture landcover and WSF settlements."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
