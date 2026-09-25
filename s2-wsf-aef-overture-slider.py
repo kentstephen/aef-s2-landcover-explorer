@@ -1242,6 +1242,8 @@ def _(
     # partition never happens).
     import threading as _th
     from concurrent.futures import ThreadPoolExecutor as _Pool
+    import pyarrow.compute as _pc
+    import pyarrow.fs as _pafs
     import shapely
     from rasterio import features as _rf
     from rasterio.transform import from_origin as _from_origin
@@ -1364,6 +1366,35 @@ def _(
     def _lst(files):
         return "[" + ", ".join(f"'{f}'" for f in files) + "]"
 
+    # The footprints are read with pyarrow, not DuckDB (2026-09-24): DuckDB's
+    # HTTP client stalled at random on this bucket (a 7 MB, two-row-group read
+    # took 3 s one run and 67 to 105 s the next, whatever the query, and its
+    # http_timeout did not cut the stall short). Here each request is cut at
+    # 6 s and retried; the footer's bbox statistics pick the row groups, and
+    # each one is read in its own thread with its column ranges pre-buffered
+    # (0.9 to 3.1 s for the same boxes, twelve reads, no stall).
+    _fs = _pafs.S3FileSystem(anonymous=True, region="us-west-2", request_timeout=6, connect_timeout=3,
+                             retry_strategy=_pafs.AwsStandardS3RetryStrategy(max_attempts=6))
+    _rg_boxes = {}  # file -> [(row group, xmin, ymin, xmax, ymax)], from its footer, once
+    _io = _Pool(16, thread_name_prefix="overture")
+    _BCOLS = ["id", "sources", "subtype", "class", "height", "num_floors", "geometry", "bbox"]
+
+    def _row_groups(path):
+        if path not in _rg_boxes:
+            md = pq.ParquetFile(path.removeprefix("s3://"), filesystem=_fs).metadata
+            names = [md.schema.column(j).path for j in range(md.num_columns)]
+            J = {k: names.index(f"bbox.{k}") for k in ("xmin", "ymin", "xmax", "ymax")}
+            _rg_boxes[path] = [
+                (i, *(getattr(md.row_group(i).column(J[k]).statistics, "min" if k in ("xmin", "ymin") else "max")
+                      for k in ("xmin", "ymin", "xmax", "ymax")))
+                for i in range(md.num_row_groups)
+            ]
+        return _rg_boxes[path]
+
+    def _read_rg(path, i):
+        pf = pq.ParquetFile(path.removeprefix("s3://"), filesystem=_fs, pre_buffer=True)
+        return pf.read_row_group(i, columns=_BCOLS)
+
     def bld_rows(box):
         """The building footprints whose bbox meets the box: arrow table
         (id, dataset, updated, subtype, class, height, num_floors, wkb,
@@ -1371,17 +1402,28 @@ def _(
         the overflow as "zoom in"). Empty when no file covers the box."""
         W_, S_, E_, N_ = box
         files = _files("buildings", "building", box)
-        if not files:
+        jobs = [
+            (p, i) for p, rgs in zip(files, _io.map(_row_groups, files))
+            for (i, x0, y0, x1, y1) in rgs
+            if x0 <= E_ and x1 >= W_ and y0 <= N_ and y1 >= S_
+        ]
+        if not jobs:
             return pa.table({"id": pa.array([], pa.string())})
-        q = f"""
-            SELECT id, sources[1].dataset AS dataset, sources[1].update_time AS updated,
-                   subtype, class, height, num_floors, ST_AsWKB(geometry) AS wkb,
-                   bbox.xmin AS xmin, bbox.ymin AS ymin, bbox.xmax AS xmax, bbox.ymax AS ymax
-            FROM read_parquet({_lst(files)}, hive_partitioning=0)
-            WHERE bbox.xmin <= {E_} AND bbox.xmax >= {W_} AND bbox.ymin <= {N_} AND bbox.ymax >= {S_}
-            LIMIT {BLD_MAX + 1}
-        """
-        return _cur().execute(q).arrow().read_all()
+        t = pa.concat_tables(list(_io.map(lambda j: _read_rg(*j), jobs)))
+        bb = t["bbox"]
+        f = _pc.struct_field
+        t = t.filter(_pc.and_(
+            _pc.and_(_pc.less_equal(f(bb, "xmin"), E_), _pc.greater_equal(f(bb, "xmax"), W_)),
+            _pc.and_(_pc.less_equal(f(bb, "ymin"), N_), _pc.greater_equal(f(bb, "ymax"), S_)),
+        )).slice(0, BLD_MAX + 1)
+        src0 = _pc.list_element(t["sources"], 0)
+        bb = t["bbox"]
+        return pa.table({
+            "id": t["id"], "dataset": f(src0, "dataset"), "updated": f(src0, "update_time"),
+            "subtype": t["subtype"], "class": t["class"], "height": t["height"], "num_floors": t["num_floors"],
+            "wkb": t["geometry"],
+            "xmin": f(bb, "xmin"), "ymin": f(bb, "ymin"), "xmax": f(bb, "xmax"), "ymax": f(bb, "ymax"),
+        })
 
     def bld_geoarrow(rows):
         """The footprints as Arrow IPC stream bytes: one record batch, one
