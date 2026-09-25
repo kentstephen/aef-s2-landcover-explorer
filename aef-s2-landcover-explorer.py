@@ -243,6 +243,16 @@ def _(os, tempfile):
         (50, "built-up"), (60, "bare or sparse vegetation"), (70, "snow and ice"),
         (80, "permanent water"), (90, "herbaceous wetland"), (95, "mangroves"), (100, "moss and lichen"),
     )
+    # zoomed out, below HEX_ZOOM, the map is WorldCover itself, as tiles read
+    # from the same COGs (Stephen, 2026-09-25: "esa to seven then h3
+    # handoff"). Not ESA's palette: it paints built-up red beside greens.
+    # Built-up is the darkest (deep violet), vegetation in greens by
+    # lightness, cropland gold, water blue; no red anywhere.
+    WC_TILE_MIN_Z = 4
+    WC_TILE_COLOURS = {
+        10: "2d6a3e", 20: "8fae5a", 30: "cfd99a", 40: "e8c547", 50: "3d2b7a", 60: "d9cbb5",
+        70: "f4f6f8", 80: "3a7dc9", 90: "6bb8b0", 95: "2f7f6f", 100: "c9d6c0",
+    }
 
     # the place under a click: the Overture divisions PMTiles answer at once in
     # the browser (locality, county, region); then the whole ladder, locality
@@ -255,7 +265,10 @@ def _(os, tempfile):
     VIEW_W, VIEW_H = 700, 780
     PAD = 1.3
     SETTLE = 0.35
-    HEX_ZOOM = 9.0
+    # hexagons from zoom 7, where the imagery also starts (Stephen, 2026-09-25:
+    # zoomed out "it's just an empty map, which is not good"); the 9 came
+    # over from the atlas, which was about buildings
+    HEX_ZOOM = 7.0
     LABELS_SLOT = "watername_ocean"
     RASTER_TILE = 256
     HOME = {"longitude": 114.29, "latitude": 30.58, "zoom": 7.2}  # Wuhan, the pair notebook's start
@@ -317,6 +330,8 @@ def _(os, tempfile):
         WC_PREFIX,
         WC_REGION,
         WC_S3_OPTS,
+        WC_TILE_COLOURS,
+        WC_TILE_MIN_Z,
         ZOOM0,
     )
 
@@ -962,7 +977,9 @@ def _(ADMIN_PQ, HOME, duckdb):
 def _(
     AEF_LEVEL_FOR_RES,
     GeoTIFF,
+    Image,
     MOSAIC_MIN_RES,
+    RASTER_TILE,
     S3Store,
     WC_BUCKET,
     WC_CLASSES,
@@ -970,10 +987,13 @@ def _(
     WC_PREFIX,
     WC_REGION,
     WC_S3_OPTS,
+    WC_TILE_COLOURS,
+    WC_TILE_MIN_Z,
     Window,
     asyncio,
     cpu,
     ctx,
+    io,
     itertools,
     math,
     np,
@@ -1002,8 +1022,11 @@ def _(
             async with _sem:
                 try:
                     _open[name] = await GeoTIFF.open(f"{WC_PREFIX}/ESA_WorldCover_10m_2021_v200_{name}_Map.tif", store=_store)
-                except FileNotFoundError:
-                    _open[name] = None  # open ocean: ESA has no tile there
+                except Exception as e:
+                    # open ocean: ESA has no tile there (async-tiff wraps the 404)
+                    if not (isinstance(e, FileNotFoundError) or "NotFound" in str(e) or "NoSuchKey" in str(e)):
+                        raise
+                    _open[name] = None
         return _open[name]
 
     async def _read(lat0, lon0, li, box):
@@ -1070,7 +1093,65 @@ def _(
         lvl = "10 m" if li < 0 else f"ov{li} ({10 * 2 ** (li + 1)} m)"
         return out, f"land cover {lvl} {len(parts)} tiles read {t1 - t0:.1f} s · fold {out.num_rows:,} {time.time() - t1:.1f} s"
 
-    return WC_CODES, wc_fold
+    # ---- ESA WorldCover as map tiles, below HEX_ZOOM ------------------------------
+    # One Web Mercator tile: every pixel's centre looked up (nearest) in the
+    # overview whose pixel is no bigger than the tile's, from each 3 degree
+    # file under it, then coloured with WC_TILE_COLOURS. Kept in memory.
+    _LUT = np.zeros((256, 4), np.uint8)
+    for _code, _hx in WC_TILE_COLOURS.items():
+        _LUT[_code] = (int(_hx[0:2], 16), int(_hx[2:4], 16), int(_hx[4:6], 16), 225)
+    _wc_png = {}
+
+    async def wc_tile_png(z, x, y):
+        """PNG bytes for Web Mercator tile (z, x, y) of WorldCover 2021, or None
+        (below WC_TILE_MIN_Z, or no land under it)."""
+        if (z, x, y) in _wc_png:
+            return _wc_png[(z, x, y)]
+        if z < WC_TILE_MIN_Z:
+            return None
+        T, n = RASTER_TILE, 2 ** z
+        _lat = lambda v: math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * v))))
+        W_, E_ = -180 + x * 360 / n, -180 + (x + 1) * 360 / n
+        N_, S_ = _lat(y / n), _lat((y + 1) / n)
+        lon = W_ + (np.arange(T) + 0.5) * (E_ - W_) / T
+        lat = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * (y + (np.arange(T) + 0.5) / T) / n))))
+        # native 10 m is 3 / 36000 degrees; overview i is 2^(i + 1) of that
+        tpx = (E_ - W_) / T
+        li = max(-1, min(5, int(math.floor(math.log2(tpx / (3 / 36000)))) - 1))
+        S_c, N_c = max(S_, -60.0), min(N_, 84.0)
+        if S_c >= N_c:
+            return None
+        lats = range(int(math.floor(S_c / 3)) * 3, int(math.floor(N_c / 3)) * 3 + 1, 3)
+        lons = range(int(math.floor(W_ / 3)) * 3, int(math.floor(E_ / 3)) * 3 + 1, 3)
+        parts = [p for p in await asyncio.gather(*(_read(la, lo, li, (W_, S_, E_, N_)) for la in lats for lo in lons)) if p is not None]
+        if not parts:
+            _wc_png[(z, x, y)] = None
+            return None
+
+        def _paint():
+            out = np.zeros((T, T), np.uint8)
+            for a, lonc, latr in parts:
+                px = (lonc[1] - lonc[0]) if lonc.size > 1 else 3.0 / (36000 / 2 ** (li + 1))
+                ci = np.floor((lon - (lonc[0] - px / 2)) / px).astype(np.int64)
+                ri = np.floor(((latr[0] + px / 2) - lat) / px).astype(np.int64)
+                cs, rs = np.nonzero((ci >= 0) & (ci < a.shape[1]))[0], np.nonzero((ri >= 0) & (ri < a.shape[0]))[0]
+                if cs.size and rs.size:
+                    sub = a[np.ix_(ri[rs], ci[cs])]
+                    view = out[np.ix_(rs, cs)]
+                    out[np.ix_(rs, cs)] = np.where(sub > 0, sub, view)
+            if not out.any():
+                return None
+            buf = io.BytesIO()
+            Image.fromarray(np.ascontiguousarray(_LUT[out]), mode="RGBA").save(buf, format="PNG")
+            return buf.getvalue()
+
+        png = await cpu(_paint)
+        _wc_png[(z, x, y)] = png
+        while len(_wc_png) > 3000:
+            _wc_png.pop(next(iter(_wc_png)))
+        return png
+
+    return WC_CODES, wc_fold, wc_tile_png
 
 
 @app.cell
@@ -1248,7 +1329,7 @@ def _(anywidget, asyncio, traitlets):
         .seg-s button{border:0;background:none;color:var(--muted);padding:3px 10px;border-radius:7px;cursor:pointer}
         .seg-s button:hover{color:var(--text)}
         .seg-s button.on{background:var(--text);color:#fff}
-        .at-key{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+        .at-key{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:12.5px;color:var(--muted)}
         .at-ramp{height:10px;border-radius:3px;width:150px}
         .at-win{position:relative;width:170px;height:28px;flex:0 0 auto}
         .at-win input{position:absolute;left:0;top:0;width:100%;height:22px;margin:0;background:none;pointer-events:none;-webkit-appearance:none;appearance:none}
@@ -1447,6 +1528,10 @@ def _(anywidget, asyncio, traitlets):
           try { new ResizeObserver(styleWin).observe(win); } catch (e) {}
           function styleKey() {
             const y0 = hmeta.y0 || st.y0, y1 = hmeta.y1 || st.y1;
+            if (map && map.getZoom() < HEXZ) {
+              keyEl.innerHTML = `land cover, ESA WorldCover 2021: ` + (cfg.wc_key || []).map(([nm, hx]) => `<span style="display:inline-flex;align-items:center;gap:4px"><i style="width:10px;height:10px;border-radius:2px;background:#${hx}"></i>${esc(nm)}</span>`).join(" ");
+              return;
+            }
             keyEl.innerHTML = st.gmode === "much"
               ? `barely <i class="at-ramp" style="background:linear-gradient(90deg,${virCss(8)})"></i> a lot, ${y0} to ${y1}`
               : `${y0 + 1} <i class="at-ramp" style="background:linear-gradient(90deg,${yobCss(8)})"></i> ${y1}, faded where it barely moved`;
@@ -1661,7 +1746,7 @@ def _(anywidget, asyncio, traitlets):
             if (N && hattrs) {
               h += `<h4>Where it changed, by year</h4><p class="sub">Hexagons in view that changed a fair amount or more, by the year their change stood out most</p>`;
               h += yearBars(c);
-            } else h += `<p class="sub" style="margin-top:12px">${map && map.getZoom() < HEXZ ? `Zoom in to zoom ${HEXZ} or closer for the hexagons.` : "Reading AlphaEarth for this view…"}</p>`;
+            } else h += `<p class="sub" style="margin-top:12px">${map && map.getZoom() < HEXZ ? `The map is land cover (ESA WorldCover 2021) out here. Zoom in to ${HEXZ} for the AlphaEarth change hexagons.` : "Reading AlphaEarth for this view…"}</p>`;
             h += hexSection(cardData);
             yc.innerHTML = h;
             const x = yc.querySelector(".x");
@@ -1727,12 +1812,21 @@ def _(anywidget, asyncio, traitlets):
             opacity: st.holding && year === st.imgYear ? 1 : 0,
             renderSubLayers: (p) => { if (!p.data) return null; const {west, south, east, north} = p.tile.bbox; return new BitmapLayer(p, {data: null, image: p.data, bounds: [west, south, east, north]}); },
           });
+          // below HEXZ: ESA WorldCover 2021 as tiles, read from the same COGs
+          const wcLayer = () => new TileLayer({
+            id: "wc",
+            getTileData: async ({index, signal}) => { const u8 = await ask("wc", 2021, index, signal); return u8 ? pngBitmap(u8) : null; },
+            onTileError: (e) => { if (!e || e.name !== "AbortError") say("land cover tile: " + ((e && e.message) || e)); },
+            tileSize: cfg.tile || 256, minZoom: cfg.wc_min_z || 4, maxZoom: Math.ceil(HEXZ) - 1, refinementStrategy: "best-available", debounceTime: 120, beforeId: slot(),
+            renderSubLayers: (p) => { if (!p.data) return null; const {west, south, east, north} = p.tile.bbox; return new BitmapLayer(p, {data: null, image: p.data, bounds: [west, south, east, north]}); },
+          });
           const ring = (h) => { try { return cellToBoundary(h, true); } catch (e) { return null; } };
           const outline = (id, h, color, width) => { const r = h ? ring(h) : null; return r ? new PathLayer({id, data: [r], getPath: (d) => d, getColor: color, widthUnits: "pixels", getWidth: width, beforeId: slot()}) : null; };
           function layers() {
             const out = [];
             const z = map ? map.getZoom() : 0;
-            if (st.holding || z >= HEXZ) for (const y of S2Y) out.push(s2Layer(y));
+            if (!st.holding && z < HEXZ) out.push(wcLayer());
+            if (st.holding || z >= 9) for (const y of S2Y) out.push(s2Layer(y));  // preloaded from zoom 9 only: below it the tiles are decimated from L5 (slow)
             // while holding: the imagery, and over it only the two outlines
             // (Stephen, 2026-09-25: the selected hexagon "should appear on the
             // satellite", white on hover and gold when picked, as in the pair)
@@ -1951,7 +2045,7 @@ def _(anywidget, asyncio, traitlets):
               update(); sendView(); renderYear();
             });
             map.on("moveend", sendView);
-            map.on("zoomend", () => { update(); renderYear(); });
+            map.on("zoomend", () => { update(); renderYear(); styleKey(); });
             map.on("mousemove", (e) => {
               if (holdT) return;
               // over the imagery: the white outline follows the pointer, no tooltip
@@ -2025,6 +2119,9 @@ def _(
     S2_YEARS,
     VIEW_H,
     VIRIDIS,
+    WC_CLASSES,
+    WC_TILE_COLOURS,
+    WC_TILE_MIN_Z,
     json,
     mo,
 ):
@@ -2041,6 +2138,7 @@ def _(
         "aef_from": AEF_FROM0, "aef_to": AEF_TO0, "aef_years": list(AEF_YEARS_ALL),
         "hex_zoom": HEX_ZOOM, "div_pm": OV_DIV_PM, "fit": _fit, "hold_ms": HOLD_MS, "hold_slop": HOLD_SLOP_PX,
         "viridis": VIRIDIS, "alpha_fill": ALPHA_FILL, "alpha_quiet": ALPHA_QUIET,
+        "wc_min_z": WC_TILE_MIN_Z, "wc_key": [[_nm, WC_TILE_COLOURS[_c]] for _c, _nm in WC_CLASSES if _c in (50, 40, 10, 30, 80)],
     }))
     HOLD = {
         "frame": None, "sent": None, "box": None, "res": None, "vs": None,
@@ -2080,6 +2178,7 @@ def _(
     traceback,
     view_to_bbox,
     wc_fold,
+    wc_tile_png,
 ):
     # ---- wiring: the camera loop, the click and the controls. Re-runs freely. -----
     try:
@@ -2090,6 +2189,8 @@ def _(
     _WC_NAME = dict(WC_CLASSES)
 
     async def _tile_fn(src, z, x, y, year):
+        if src == "wc":
+            return await wc_tile_png(z, x, y)
         return await s2_tile_png(z, x, y, year)
 
     cmap.tile_fn = _tile_fn
@@ -2435,6 +2536,12 @@ def _(mo):
     raster read straight from ESA's bucket: a count of pixels per class per
     hexagon, shown as shares. It is one year only, so it describes the
     ground; it does not date anything.
+
+    **Zoomed out (below zoom 7).** The map is WorldCover itself, drawn as
+    tiles from the same COGs (the coarsest overview that still fills each
+    tile), in a palette without red: built-up deep violet, cropland gold,
+    vegetation in greens, water blue. It shows where the towns, farmland and
+    water are; from zoom 7 the AlphaEarth change hexagons take over.
 
     **What happened (Sentinel-2).** Holding the map swaps the hexagons for
     Earth Genome's yearly true-colour mosaic, 2022 to 2025, so the change

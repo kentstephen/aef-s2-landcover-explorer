@@ -1,4 +1,4 @@
-Running in a sandbox: /opt/homebrew/bin/uv run --isolated --no-project --compile-bytecode --with-requirements /var/folders/7c/sjv2kprs3qs3x738ldnw1b040000gn/T/tmpcvostkyf.txt --python >=3.13 marimo run aef-s2-landcover-explorer.py --headless --no-token --port 2812
+Running in a sandbox: /opt/homebrew/bin/uv run --isolated --no-project --compile-bytecode --with-requirements /var/folders/7c/sjv2kprs3qs3x738ldnw1b040000gn/T/tmp1b5eihcy.txt --python >=3.13 marimo run aef-s2-landcover-explorer.py --headless --no-token --port 2812
 
         Running aef-s2-landcover-explorer.py ⚡
 
