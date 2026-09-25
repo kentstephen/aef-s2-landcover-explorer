@@ -656,6 +656,27 @@ def _(
         lat = WSF_Y0 - (r0 + stride * np.arange(a.shape[0]) + 0.5) * px
         return a, lon, lat
 
+    # above wsf_tile_png: marimo drops a cell's _private helper that is only
+    # referenced by a function defined before it (NameError under marimo run)
+    def _wsf_png(got, k, n, y, lon0, lon1):
+        T = RASTER_TILE
+        arr, lon, lat = got
+        ys = np.pi * (1 - 2 * (y + (np.arange(T) + 0.5) / T) / n)
+        lat_c = np.degrees(np.arctan(np.sinh(ys)))
+        lon_c = lon0 + (np.arange(T) + 0.5) * (lon1 - lon0) / T
+        px = _px(k)
+        ci = np.floor((lon_c - (lon[0] - px / 2)) / px).astype(np.int64)
+        ri = np.floor(((lat[0] + px / 2) - lat_c) / px).astype(np.int64)
+        okc, okr = (ci >= 0) & (ci < arr.shape[1]), (ri >= 0) & (ri < arr.shape[0])
+        pxv = arr[np.clip(ri, 0, arr.shape[0] - 1)[:, None], np.clip(ci, 0, arr.shape[1] - 1)[None, :]]
+        pxv = np.where(okr[:, None] & okc[None, :], pxv, 0)
+        rgba = _cmap[pxv.astype(np.uint8)]
+        if not rgba[..., 3].any():
+            return None
+        buf = io.BytesIO()
+        Image.fromarray(np.ascontiguousarray(rgba), mode="RGBA").save(buf, format="PNG")
+        return buf.getvalue()
+
     async def wsf_tile_png(z, x, y):
         """RGBA PNG bytes for Web Mercator tile (z, x, y) of the pyramid (the
         earliest built-up date under each pixel, the year's color), or None
@@ -682,25 +703,6 @@ def _(
         if len(_png_cache) > 4000:
             _png_cache.pop(next(iter(_png_cache)))
         return _png_cache[key]
-
-    def _wsf_png(got, k, n, y, lon0, lon1):
-        T = RASTER_TILE
-        arr, lon, lat = got
-        ys = np.pi * (1 - 2 * (y + (np.arange(T) + 0.5) / T) / n)
-        lat_c = np.degrees(np.arctan(np.sinh(ys)))
-        lon_c = lon0 + (np.arange(T) + 0.5) * (lon1 - lon0) / T
-        px = _px(k)
-        ci = np.floor((lon_c - (lon[0] - px / 2)) / px).astype(np.int64)
-        ri = np.floor(((lat[0] + px / 2) - lat_c) / px).astype(np.int64)
-        okc, okr = (ci >= 0) & (ci < arr.shape[1]), (ri >= 0) & (ri < arr.shape[0])
-        pxv = arr[np.clip(ri, 0, arr.shape[0] - 1)[:, None], np.clip(ci, 0, arr.shape[1] - 1)[None, :]]
-        pxv = np.where(okr[:, None] & okc[None, :], pxv, 0)
-        rgba = _cmap[pxv.astype(np.uint8)]
-        if not rgba[..., 3].any():
-            return None
-        buf = io.BytesIO()
-        Image.fromarray(np.ascontiguousarray(rgba), mode="RGBA").save(buf, format="PNG")
-        return buf.getvalue()
 
     _CNT = ", ".join(f"sum(CASE WHEN idx = {k} THEN 1 ELSE 0 END) AS c{k:02d}" for k in range(1, WSF_NIDX + 1))
 
@@ -2042,7 +2044,7 @@ def _(anywidget, asyncio, traitlets):
           const scSpn = document.createElement("span"); scSpn.className = "spn";
           const sc = document.createElement("input"); sc.type = "range"; sc.min = SC_MIN; sc.max = SC_MAX; sc.step = 0.1;
           sc.title = "gamma of the Sentinel-2 mosaic: above 1 lifts the midtones (double-click for 1.0)";
-          const scTxt = document.createElement("span"); scTxt.style.cssText = "font-variant-numeric:tabular-nums;min-width:2.4em";
+          const scTxt = document.createElement("span"); scTxt.style.cssText = "font-variant-numeric:tabular-nums;min-width:2.4em;margin-right:.6rem";
           scr.append(scTrk, scSpn, sc);
           scWrap.append(eyebrow("gamma"), scr, scTxt);
           rowS2.appendChild(scWrap);
