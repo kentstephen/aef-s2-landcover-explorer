@@ -1435,6 +1435,9 @@ def _(anywidget, asyncio, time, traitlets):
         .at-yc .yr{display:flex;align-items:flex-end;gap:12px}
         .at-yc .yr b{font-size:56px;line-height:.86;font-weight:600;letter-spacing:-.035em;font-stretch:88%}
         .at-yc .yr span{font-size:12.5px;color:var(--muted);line-height:1.35;padding-bottom:2px}
+        .at-yc .yr.quiet{align-items:center}
+        .at-yc .yr.quiet span{padding-bottom:0}
+        .at-yc .yr.quiet .at-cb{margin-top:-2px;align-self:center}
         .at-yc.holding .yr span{color:var(--text)}
         .at-yc h4{margin:14px 0 2px;font-size:13.5px;font-weight:600}
         .at-yc .sub{color:var(--muted);font-size:12.5px;margin:0 0 6px}
@@ -1482,7 +1485,7 @@ def _(anywidget, asyncio, time, traitlets):
         import {MapboxOverlay} from "https://esm.sh/@deck.gl/mapbox@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {BitmapLayer, PathLayer} from "https://esm.sh/@deck.gl/layers@9.3.10?deps=@deck.gl/core@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
         import {TileLayer, H3HexagonLayer} from "https://esm.sh/@deck.gl/geo-layers@9.3.10?deps=@deck.gl/core@9.3.10,@deck.gl/extensions@9.3.10,@deck.gl/layers@9.3.10,@deck.gl/mesh-layers@9.3.10,apache-arrow@18.1.0,@luma.gl/core@9.3.6,@luma.gl/engine@9.3.6,@luma.gl/webgl@9.3.6,@luma.gl/shadertools@9.3.6,@luma.gl/gltf@9.3.6";
-        import {latLngToCell, getResolution, cellToBoundary, cellToLatLng} from "https://esm.sh/h3-js@4.5.0";
+        import {latLngToCell, getResolution, cellToBoundary, cellToLatLng, isValidCell} from "https://esm.sh/h3-js@4.5.0";
         import {Protocol as PMProtocol} from "https://esm.sh/pmtiles@4.5.0";
         maplibregl.addProtocol("pmtiles", new PMProtocol().tile);
 
@@ -1556,7 +1559,7 @@ def _(anywidget, asyncio, time, traitlets):
           // top left: search, and the one control row for the hexagons
           const top = el_("div", "at-top");
           const search = el_("div", "at-search at-glass", ICON.search);
-          const gc = el_("input"); gc.type = "search"; gc.placeholder = "Search a place"; gc.autocomplete = "off"; gc.spellcheck = false;
+          const gc = el_("input"); gc.type = "search"; gc.placeholder = "Search a place or H3 cell"; gc.autocomplete = "off"; gc.spellcheck = false;
           const hits = el_("div", "at-hits at-glass");
           search.append(gc, hits);
           const panel = el_("div", "at-panel at-glass");
@@ -1667,7 +1670,7 @@ def _(anywidget, asyncio, time, traitlets):
             <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. The hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Switch to <b>AEF Change Year</b> to color each hexagon by the year its change stood out most, light yellow for the first year to dark brown for the last. Each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all). Hexagons fade where they barely moved.</p>
             <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: move it off what you want to see, drag the map to look around, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
             <p><b>Click</b> a hexagon for its account: each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. WorldCover is one map of one year, so it says what a place is, not when it changed.</p>
-            <p><small>Keys: hold space for the imagery, scroll for its year; S AEF Change, D AEF Change Year; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search; Esc close.</small></p>
+            <p><small>Keys: hold space for the imagery, scroll for its year; S AEF Change, D AEF Change Year; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search (a place, or paste an H3 cell); Esc close.</small></p>
             <p><small>AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions (ODbL), the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
           pane.appendChild(about);
@@ -1845,7 +1848,11 @@ def _(anywidget, asyncio, time, traitlets):
           function renderYear() {
             yc.classList.toggle("holding", st.holding);
             const c = viewCounts();
-            let h = `<div class="yr"><b>${st.imgYear}</b><span>${st.holding ? "Scroll for another year. Let go to see the hexagons." : "Imagery year. Hold space to see it."}</span><button class="at-cb" title="${ycFolded ? "show the card" : "fold the card"}">${ICON.chev}</button></div>`;
+            // the imagery year only while the imagery shows (Stephen, 2026-09-25); otherwise the hint
+            const cbH = `<button class="at-cb" title="${ycFolded ? "show the card" : "fold the card"}">${ICON.chev}</button>`;
+            let h = st.holding
+              ? `<div class="yr"><b>${st.imgYear}</b><span>Scroll for another year. Let go to see the hexagons.</span>${cbH}</div>`
+              : `<div class="yr quiet"><span>Hold space for the Sentinel-2 imagery</span>${cbH}</div>`;
             if (N && hattrs) {
               h += `<h4>Where it changed, by year</h4><p class="sub">Hexagons in view that changed a fair amount or more, by the year their change stood out most</p>`;
               h += yearBars(c);
@@ -1978,6 +1985,8 @@ def _(anywidget, asyncio, time, traitlets):
             if (hmeta.seq) out.push(hexLayer(!st.holding && !!hcol && z >= HEXZ));
             const hv = hover != null && hover >= 0 ? outline("hover", hexes[hover], [255, 255, 255, 235], 2) : null;
             if (hv) out.push(hv);
+            const sc = searched ? outline("searched", searched, [0, 114, 178, 255], 3) : null;
+            if (sc) out.push(sc);
             const pk = picked ? outline("picked", picked, [255, 200, 40, 255], 3) : null;
             if (pk) out.push(pk);
             return out;
@@ -2066,9 +2075,11 @@ def _(anywidget, asyncio, time, traitlets):
 
           // ---- search ------------------------------------------------------------------------
           const PHOTON = "https://photon.komoot.io/api/";
-          let gcHits = [], gcSel = -1, gcTimer = null, gcSeq = 0;
-          const hitName = (f) => { const p = f.properties || {}; return [p.name, p.street && !p.name ? p.street : null, p.city && p.city !== p.name ? p.city : null, p.state, p.country].filter(Boolean).join(", "); };
-          const hitKind = (f) => { const p = f.properties || {}; return [p.osm_value, p.type].filter((x) => x && x !== "yes").join(", "); };
+          let gcHits = [], gcSel = -1, gcTimer = null, gcSeq = 0, searched = null;
+          // an H3 string in the box is a cell, not a place (Stephen, 2026-09-25)
+          const h3Of = (q) => { const h = q.trim().toLowerCase(); try { return /^[0-9a-f]{15}$/.test(h) && isValidCell(h) ? h : null; } catch (e) { return null; } };
+          const hitName = (f) => { if (f.h3) return "H3 " + f.h3; const p = f.properties || {}; return [p.name, p.street && !p.name ? p.street : null, p.city && p.city !== p.name ? p.city : null, p.state, p.country].filter(Boolean).join(", "); };
+          const hitKind = (f) => { if (f.h3) { const [la, lo] = cellToLatLng(f.h3); return `res ${getResolution(f.h3)}, ${la.toFixed(5)}, ${lo.toFixed(5)}`; } const p = f.properties || {}; return [p.osm_value, p.type].filter((x) => x && x !== "yes").join(", "); };
           const gcHide = () => { hits.style.display = "none"; hits.replaceChildren(); gcSel = -1; };
           const gcShow = () => {
             hits.replaceChildren();
@@ -2078,14 +2089,26 @@ def _(anywidget, asyncio, time, traitlets):
           };
           const gcAsk = async () => {
             const q = gc.value.trim();
+            if (!q && searched) { searched = null; update(); }
             if (q.length < 2) { gcHits = []; gcHide(); return; }
             const s = ++gcSeq;
+            const h3 = h3Of(q);
+            if (h3) { gcHits = [{h3}]; gcSel = 0; gcShow(); return; }
             const params = new URLSearchParams({q, limit: "6", lang: "en"});
             if (map) { const c = map.getCenter(); params.set("lon", c.lng.toFixed(4)); params.set("lat", c.lat.toFixed(4)); }
             try { const r = await fetch(PHOTON + "?" + params.toString()); const d = await r.json(); if (s !== gcSeq) return; gcHits = (d.features || []).filter((f) => f.geometry && f.geometry.coordinates); gcSel = gcHits.length ? 0 : -1; gcShow(); }
             catch (e) { if (s === gcSeq) note("search: " + e.message, 4000); }
           };
           const gcFly = (f) => {
+            if (f.h3) {
+              // zoomed so the cell is about 80 px across, never out past the hexagons
+              const [lat, lon] = cellToLatLng(f.h3), edge = 1281256 / Math.pow(Math.sqrt(7), getResolution(f.h3));
+              const zoom = Math.max(HEXZ, Math.min(17, Math.log2(78271.5 * Math.cos(lat * Math.PI / 180) * 80 / (2 * edge))));
+              searched = f.h3; gcHits = []; gcHide(); gc.blur(); update();
+              if (map) map.flyTo({center: [lon, lat], zoom, duration: 2200, essential: true});
+              return;
+            }
+            searched = null;
             const [lon, lat] = f.geometry.coordinates;
             const ext = (f.properties || {}).extent;
             let zoom = 12;
