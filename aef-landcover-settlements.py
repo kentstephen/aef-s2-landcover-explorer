@@ -222,8 +222,13 @@ def _(os, tempfile):
         (80, "permanent water"), (90, "herbaceous wetland"), (95, "mangroves"), (100, "moss and lichen"),
     )
 
-    # place names on click, from the Overture divisions PMTiles (browser only)
+    # the place under a click: the Overture divisions PMTiles answer at once in
+    # the browser (locality, county, region); then the whole ladder, locality
+    # up to country with each country's own word for the level (local_type),
+    # from Overture's divisions GeoParquet as Fused partitions it on Source
+    # Cooperative (the pair notebook's lookup: 7 s cold, 1 to 3 s after)
     OV_DIV_PM = "https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-08-19.0/divisions.pmtiles"
+    ADMIN_PQ = "s3://us-west-2.opendata.source.coop/fused/overture/2026-05-20-0/theme=divisions"
 
     VIEW_W, VIEW_H = 700, 780
     PAD = 1.3
@@ -241,6 +246,7 @@ def _(os, tempfile):
     ALPHA_QUIET = 70
     VIRIDIS = "440154470d6048186a482374472e7c4538824241863e4a893a548c365d8d32658e2e6d8e2b758e287d8e25848e228c8d1f948c1e9c8920a38625ab822eb37c3aba7648c16e58c7656ccd5a7fd34e93d741a8db34c0df25d5e21aeae51afde725"
     return (
+        ADMIN_PQ,
         AEF_FROM0,
         AEF_INDEX_URL,
         AEF_LEVEL_FOR_RES,
@@ -828,6 +834,106 @@ def _(duckdb):
     return (con,)
 
 
+@app.cell
+def _(ADMIN_PQ, HOME, duckdb):
+    # ---- the place under a click: one point query against fused/overture ------
+    # (the pair notebook's, as it was: Stephen, 2026-09-25, "it works well in
+    # the pair notebook")
+    # Overture's divisions theme as Fused geo-partitions it on Source
+    # Cooperative, 79 GeoParquet files per type, each row with a bbox struct.
+    # division_area says which polygons hold the point: country, region,
+    # county, localadmin, locality, every level Overture draws, anywhere.
+    # division, joined on the ids, adds local_type, the country's own word for
+    # the level (city, town, village, prefecture, governorate, state). DuckDB
+    # reads the footers, keeps the row groups whose bbox stats can hold the
+    # point, and runs ST_Contains on what is left. Its own connection, a
+    # cursor per call so a click and the warm-up can overlap, the object cache
+    # on so the footers are read once: 7 s cold, 1 to 3 s after.
+    import threading as _th
+
+    _dv = {"con": None, "err": None}
+    _lock = _th.Lock()
+    _AREA = f"{ADMIN_PQ}/type=division_area/*.parquet"
+    _DIV = f"{ADMIN_PQ}/type=division/*.parquet"
+    _ORDER = {"locality": 0, "localadmin": 1, "county": 2, "region": 3, "country": 4}
+
+    def _connect():
+        with _lock:
+            if _dv["con"] is None and _dv["err"] is None:
+                try:
+                    c = duckdb.connect()
+                    for ext in ("spatial", "httpfs"):
+                        try:
+                            c.execute(f"LOAD {ext}")
+                        except Exception:
+                            c.execute(f"INSTALL {ext}; LOAD {ext}")
+                    # an open bucket: the region and path-style URLs (the
+                    # bucket name has dots in it), nothing to sign with.
+                    # GLOBAL, because a cursor is its own session and a plain
+                    # SET would not reach it
+                    c.execute("SET GLOBAL s3_region='us-west-2'; SET GLOBAL s3_url_style='path'; SET GLOBAL enable_object_cache=true")
+                    _dv["con"] = c
+                except Exception as e:
+                    _dv["err"] = e
+            return _dv["con"]
+
+    _Q_AREA = (
+        "SELECT subtype, names.primary, names.common['en'], country, division_id "
+        f"FROM read_parquet('{_AREA}', hive_partitioning=0) "
+        "WHERE bbox.xmin <= $x AND bbox.xmax >= $x AND bbox.ymin <= $y AND bbox.ymax >= $y "
+        "AND class = 'land' AND ST_Contains(geometry, ST_Point($x, $y))"
+    )
+    # the country filter is what makes the join quick: the files are spatial,
+    # so each row group carries a tight country range and most are skipped
+    # unread (25 s cold at Wuhan against 165 s without it, 1 to 3 s warm)
+    _Q_DIV = (
+        "SELECT id, local_type['en'], population "
+        f"FROM read_parquet('{_DIV}', hive_partitioning=0) "
+        "WHERE country = $country AND list_contains($ids, id)"
+    )
+
+    def division_at(lon, lat):
+        """The divisions holding the point, smallest first: a list of
+        {subtype, name, name_en, local_type, population}, locality up to
+        country, whichever Overture draws there. Raises on a failed read so
+        the caller can say so."""
+        c = _connect()
+        if c is None:
+            raise _dv["err"]
+        cur = c.cursor()
+        rows = cur.execute(_Q_AREA, {"x": float(lon), "y": float(lat)}).fetchall()
+        seen, out = set(), []
+        for sub, name, name_en, country, did in rows:
+            if sub in seen:
+                continue
+            seen.add(sub)
+            out.append({"subtype": sub, "name": name, "name_en": name_en, "local_type": None,
+                        "population": None, "id": did, "country": country})
+        out.sort(key=lambda d: _ORDER.get(d["subtype"], -1))
+        ids = [d["id"] for d in out if d["id"]]
+        country = next((d["country"] for d in out if d["country"]), None)
+        if ids and country:
+            try:
+                extra = {i: (lt, pop) for i, lt, pop in cur.execute(_Q_DIV, {"country": country, "ids": ids}).fetchall()}
+            except Exception:
+                extra = {}
+            for d in out:
+                d["local_type"], d["population"] = extra.get(d["id"], (None, None))
+        return out
+
+    # the footers, read now rather than on the first click, off the main
+    # thread: about 7 s for division_area and 25 s more for division
+    def _warm():
+        try:
+            division_at(HOME["longitude"], HOME["latitude"])
+        except Exception:
+            pass
+
+    _th.Thread(target=_warm, daemon=True).start()
+    return (division_at,)
+
+
+
 
 
 @app.cell
@@ -1236,6 +1342,13 @@ def _(anywidget, asyncio, traitlets):
           const VIR = (cfg.viridis || "440154fde725").match(/.{6}/g).map((h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)));
           const vir = (t) => { t = Math.max(0, Math.min(1, t)) * (VIR.length - 1); const i = Math.min(VIR.length - 2, Math.floor(t)), f = t - i; return VIR[i].map((v, j) => Math.round(v + (VIR[i + 1][j] - v) * f)); };
           const virCss = (n) => Array.from({length: n}, (_, i) => `rgb(${vir(i / (n - 1)).join(",")})`).join(",");
+          // the year of the biggest change: YlOrBr less its near-white end, light
+          // yellow for the first year to dark brown for the last (Stephen,
+          // 2026-09-25: "use ylorbr for year changed"); a lightness ramp on the
+          // orange leg, readable without red, and apart from how-much's viridis
+          const YOB = ["fee391", "fec44f", "fe9929", "ec7014", "cc4c02", "993404", "662506"].map((h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)));
+          const yob = (t) => { t = Math.max(0, Math.min(1, t)) * (YOB.length - 1); const i = Math.min(YOB.length - 2, Math.floor(t)), f = t - i; return YOB[i].map((v, j) => Math.round(v + (YOB[i + 1][j] - v) * f)); };
+          const yobCss = (n) => Array.from({length: n}, (_, i) => `rgb(${yob(i / (n - 1)).join(",")})`).join(",");
           const A_FILL = cfg.alpha_fill || 235, A_QUIET = cfg.alpha_quiet || 70;
           const HEXZ = cfg.hex_zoom || 9, HOLD_MS = cfg.hold_ms || 200, SLOP = cfg.hold_slop || 5;
           const st = {
@@ -1269,8 +1382,8 @@ def _(anywidget, asyncio, traitlets):
             return () => items.forEach(([k], i) => bs[i].classList.toggle("on", isOn(k)));
           };
           const rFill = rowOf("Colour by");
-          const styleFill = segOf(rFill, [["much", "How much it changed", "how far the ground's AlphaEarth numbers moved between the first and last year read"],
-                                          ["year", "Year of the biggest change", "the year each hexagon's change stood out most against the usual change that year, faded where the ground barely moved"]],
+          const styleFill = segOf(rFill, [["much", "How much it changed", "how far the ground's AlphaEarth numbers moved between the first and last year read (S)"],
+                                          ["year", "Year of the biggest change", "the year each hexagon's change stood out most against the usual change that year, faded where the ground barely moved (D)"]],
                                   (k) => k === st.gmode, (k) => { st.gmode = k; recolorHex(); styleRows(); update(); });
           const rKey = rowOf("");
           const keyEl = el_("span", "at-key");
@@ -1309,7 +1422,7 @@ def _(anywidget, asyncio, traitlets):
             const y0 = hmeta.y0 || st.y0, y1 = hmeta.y1 || st.y1;
             keyEl.innerHTML = st.gmode === "much"
               ? `barely <i class="at-ramp" style="background:linear-gradient(90deg,${virCss(8)})"></i> a lot, ${y0} to ${y1}`
-              : `${y0 + 1} <i class="at-ramp" style="background:linear-gradient(90deg,${virCss(8)})"></i> ${y1}, faded where it barely moved`;
+              : `${y0 + 1} <i class="at-ramp" style="background:linear-gradient(90deg,${yobCss(8)})"></i> ${y1}, faded where it barely moved`;
           }
           function styleRows() { styleFill(); styleWin(); styleKey(); }
           top.append(search, panel);
@@ -1345,11 +1458,11 @@ def _(anywidget, asyncio, traitlets):
           const about = el_("div", "at-about");
           about.innerHTML = `<div class="box at-glass">
             <h2>Where the ground changed</h2>
-            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. The hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Switch to <b>year of the biggest change</b> to colour each hexagon by the year its change stood out most. Each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all). Hexagons fade where they barely moved.</p>
+            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. The hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Switch to <b>year of the biggest change</b> to colour each hexagon by the year its change stood out most, light yellow for the first year to dark brown for the last. Each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all). Hexagons fade where they barely moved.</p>
             <p><b>Hold space</b>, or press and hold on the map, to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. With space the mouse stays free: move it off what you want to see, or drag the map to look around. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
             <p><b>Click</b> a hexagon for its account: each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. WorldCover is one map of one year, so it says what a place is, not when it changed.</p>
-            <p><small>Keys: hold space for the imagery, scroll for its year; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search; Esc close.</small></p>
-            <p><small>AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions (ODbL). Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
+            <p><small>Keys: hold space for the imagery, scroll for its year; S how much it changed, D the year of the biggest change; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search; Esc close.</small></p>
+            <p><small>AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions (ODbL), the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
           pane.appendChild(about);
           about.querySelector("button").onclick = () => { about.style.display = "none"; };
@@ -1412,7 +1525,7 @@ def _(anywidget, asyncio, traitlets):
               const t = (lv - 1) / 254;
               let col, a;
               if (st.gmode === "much") { col = vir(t); a = A_FILL; }
-              else if (yc_) { col = vir(y1 - y0 > 1 ? (2000 + yc_ - (y0 + 1)) / span : 1); a = Math.round(A_QUIET + (A_FILL - A_QUIET) * t); }
+              else if (yc_) { col = yob(y1 - y0 > 1 ? (2000 + yc_ - (y0 + 1)) / span : 1); a = Math.round(A_QUIET + (A_FILL - A_QUIET) * t); }
               else continue;
               hcol[o] = col[0]; hcol[o + 1] = col[1]; hcol[o + 2] = col[2]; hcol[o + 3] = a;
             }
@@ -1488,7 +1601,7 @@ def _(anywidget, asyncio, traitlets):
           function hexSection(c) {
             if (!c || !c.kind) return "";
             let h = `<div class="hex"><button class="x" title="close (Esc)" aria-label="close">×</button>`;
-            if (c.place && c.place.length) h += `<div class="place">${c.place.map(esc).join(", ")}</div>`;
+            if (c.place && c.place.length) h += `<div class="place">${c.place.map((q) => typeof q === "string" ? esc(q) : esc(q.name) + (q.tag ? ` <span style="opacity:.7">(${esc(q.tag)})</span>` : "")).join(", ")}</div>`;
             if (c.kind === "note") return h + `<h3>${esc(c.title || "")}</h3></div>`;
             h += `<h3>This hexagon</h3>`;
             if (c.level == null) h += `<p>No AlphaEarth data here.</p>`;
@@ -1738,6 +1851,7 @@ def _(anywidget, asyncio, traitlets):
             if (tgt && /^(INPUT|SELECT|TEXTAREA)$/.test(tgt.tagName)) return;
             const k = e.key, lo = st.y0, hi = st.y1;
             if (k === " ") { if (!e.repeat) spaceDown(); }
+            else if (k === "s" || k === "S" || k === "d" || k === "D") { const m = (k === "s" || k === "S") ? "much" : "year"; if (m !== st.gmode) { st.gmode = m; recolorHex(); styleRows(); update(); } }
             else if (k === "[" || k === "]") stepImg(k === "]" ? 1 : -1);
             else if (k === ";" || k === "'") { st.s2scale = Math.round(10 * Math.max(0.3, Math.min(2.5, st.s2scale + (k === "'" ? 0.1 : -0.1)))) / 10; gam.value = st.s2scale; clearTimeout(gamT); gamT = setTimeout(() => send("s2scale"), 250); }
             else if (k === "-" || k === "=") { const v = Math.max(aefYears[0], Math.min(hi - 1, lo + (k === "=" ? 1 : -1))); if (v !== lo) { st.y0 = v; winSent = [st.y0, st.y1]; styleWin(); send("aef"); } }
@@ -1879,7 +1993,7 @@ def _(
         "busy": False, "pending": None, "pending_force": False, "task": None, "loop": None,
         "s2scale": S2_SCALE0, "s2gen": 0, "y0": AEF_FROM0, "y1": AEF_TO0,
         "hit": None, "pick_n": None, "card": None, "memo": {}, "aef": {}, "wc": {},
-        "h_cam": None, "h_ctl": None, "h_pick": None, "runs": 0, "hex_status": "",
+        "h_cam": None, "h_ctl": None, "h_pick": None, "runs": 0, "hex_status": "", "place": None,
     }
     cmap
     return HOLD, cmap
@@ -1901,6 +2015,7 @@ def _(
     cmap,
     contains,
     cpu,
+    division_at,
     json,
     np,
     pad_box,
@@ -2125,10 +2240,36 @@ def _(
             cmap.card = ""
             return
         adm = p.get("admin") or {}
-        card["place"] = [x for x in (adm.get("locality"), adm.get("county"), adm.get("region")) if x]
+        got = HOLD.get("place") or {}
+        card["place"] = got["levels"] if got.get("n") == p.get("n") else [{"name": x} for x in (adm.get("locality"), adm.get("county"), adm.get("region")) if x]
         card["n"] = p.get("n")
         HOLD["card"], HOLD["card_pick"] = card, p
         cmap.card = json.dumps(card)
+
+    def _place_later(p):
+        """The whole ladder of divisions under the click, from GeoParquet;
+        the card is resent with it if the click is still the latest."""
+        n = p.get("n")
+
+        async def _later():
+            try:
+                d = await asyncio.to_thread(division_at, p["lon"], p["lat"])
+            except Exception:
+                return
+            if HOLD.get("pick_n") != n or not d:
+                return
+            levels = []
+            for lv in d:
+                nm = lv.get("name_en") or lv.get("name")
+                if not nm:
+                    continue
+                lt = lv.get("local_type")
+                levels.append({"name": nm, "tag": lt if lt and lt != lv["subtype"] else lv["subtype"]})
+            HOLD["place"] = {"n": n, "levels": levels}
+            if HOLD.get("card_pick") is p:
+                _card_send(p)
+
+        _spawn(_later())
 
     def _on_pick(change):
         try:
@@ -2142,8 +2283,11 @@ def _(
                 cmap.card = ""
                 return
             _card_send(p)
+            if HOLD.get("card") and p.get("lon") is not None:
+                _place_later(p)
         except Exception as e:
             cmap.card = json.dumps({"kind": "note", "title": f"click: {type(e).__name__}: {e}"})
+
 
     if HOLD.get("h_pick") is not None:
         try:

@@ -14,10 +14,27 @@ and narrows the sources to these.
 | Dataset | Producer | Where | Licence |
 | --- | --- | --- | --- |
 | AlphaEarth Foundations Satellite Embedding, annual, 2017 to 2025 | Google and Google DeepMind ([dataset page](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)) | [tge-labs/aef](https://source.coop/tge-labs/aef), [tge-labs/aef-mosaic](https://source.coop/tge-labs/aef-mosaic) | CC BY 4.0 |
-| Overture Maps landcover (base theme, `land_cover`) | Overture Maps Foundation, from ESA WorldCover | [Overture release bucket](https://docs.overturemaps.org/guides/base/) | CC BY 4.0 |
+| ESA WorldCover 10 m 2021 v200 | ESA WorldCover consortium, from Copernicus Sentinel data | `s3://esa-worldcover/v200/2021/map` (AWS open data) | CC BY 4.0 |
+| Overture Maps divisions (place names: PMTiles, and GeoParquet via [fused/overture](https://source.coop/fused/overture)) | Overture Maps Foundation | Overture's release bucket, Source Cooperative | ODbL |
 | World Settlement Footprint (WSF) Tracker, 10 m, 2016 to 2026 | DLR and MindEarth | [mindearth/wsf](https://source.coop/mindearth/wsf) ([DOI 10.5281/zenodo.20424537](https://doi.org/10.5281/zenodo.20424537)) | CC BY 3.0 IGO |
 | Sentinel-2 yearly mosaics (true colour, 2022 to 2025) | Earth Genome, from Copernicus Sentinel data | [earthgenome/sentinel2-yearly-mosaics](https://source.coop/earthgenome/sentinel2-yearly-mosaics) | CC BY 4.0 |
 | Sentinel-2 L2A, EOPF zarr | ESA, Copernicus | [EOPF Sentinel Zarr Samples](https://zarr.eopf.copernicus.eu/) | Copernicus open licence |
+
+## The notebook
+
+`aef-landcover-settlements.py`: AlphaEarth change hexagons in viridis (how
+much the ground changed over the years read, or, in YlOrBr, the year its
+change stood out most against that year's usual change in view), ESA
+WorldCover 2021 class shares per hexagon, and the Earth Genome Sentinel-2
+mosaic on demand. Hold space (the map still pans) or press and hold on the
+map to swap the hexagons for the imagery; scroll while holding to step the
+year. Click a hexagon for its year-to-year steps, its land cover and the
+Overture divisions it sits in. Keys: `S` how much, `D` year, `X` fill the
+window.
+
+```
+uv run marimo run aef-landcover-settlements.py
+```
 
 ## Carried over
 
@@ -40,6 +57,6 @@ uv run marimo edit <notebook>.py --sandbox
 
 AlphaEarth Foundations Satellite Embedding dataset by Google and Google
 DeepMind (CC BY 4.0). WSF Tracker (c) DLR and MindEarth, via Source
-Cooperative. Overture Maps landcover by the Overture Maps Foundation.
+Cooperative. ESA WorldCover 2021 (CC BY 4.0). Overture Maps divisions (ODbL).
 Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Contains modified
 Copernicus Sentinel data.
