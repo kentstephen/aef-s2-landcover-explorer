@@ -54,7 +54,7 @@ produced by Google and Google DeepMind" (CC BY 4.0). ESA WorldCover 10 m
 data (2021) processed by the ESA WorldCover consortium (CC BY 4.0).
 Sentinel-2 yearly mosaics by Earth Genome (CC BY 4.0). Photon (komoot) over
 OpenStreetMap data (ODbL). Overture Maps divisions for place names (ODbL).
-Basemap by OpenFreeMap (OpenMapTiles, OpenStreetMap data).
+Basemap by Carto.
 """
 
 import marimo
@@ -273,9 +273,7 @@ def _(os, tempfile):
     # hexagons as tiles "making my computer hum", so a min zoom for zoomed
     # out; zoomed in stays)
     HEX_ZOOM = 9.0
-    # OpenFreeMap dark (Stephen, 2026-09-25); the map layers go in under its
-    # first road name, so roads sit beneath them and the labels above
-    LABELS_SLOT = "highway_name_other"
+    LABELS_SLOT = "watername_ocean"
     RASTER_TILE = 256
     HOME = {"longitude": 114.29, "latitude": 30.58, "zoom": 7.2}  # Wuhan, the pair notebook's start
 
@@ -1461,7 +1459,7 @@ def _(anywidget, asyncio, traitlets):
         import {Protocol as PMProtocol} from "https://esm.sh/pmtiles@4.5.0";
         maplibregl.addProtocol("pmtiles", new PMProtocol().tile);
 
-        const STYLE = "https://tiles.openfreemap.org/styles/dark";
+        const STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
         const FONTS = "https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&display=swap";
         const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
         const fmt = (n) => Number(n).toLocaleString("en-US");
@@ -1626,7 +1624,7 @@ def _(anywidget, asyncio, traitlets):
             <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: move it off what you want to see, drag the map to look around, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
             <p><b>Click</b> a hexagon for its account: each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. WorldCover is one map of one year, so it says what a place is, not when it changed.</p>
             <p><small>Keys: hold space for the imagery, scroll for its year; S how much it changed, D the year of the biggest change; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search; Esc close.</small></p>
-            <p><small>AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions (ODbL), the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by OpenFreeMap (OpenMapTiles, OpenStreetMap data).</small></p>
+            <p><small>AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions (ODbL), the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
           pane.appendChild(about);
           about.querySelector("button").onclick = () => { about.style.display = "none"; };
@@ -1854,7 +1852,7 @@ def _(anywidget, asyncio, traitlets):
 
           // ---- the layers --------------------------------------------------------------
           let map = null, ov = null;
-          const slot = () => { const want = cfg.labels_slot || "highway_name_other"; const s = map && map.getStyle && map.getStyle(); if (!s || !s.layers || s.layers.some((x) => x.id === want)) return want; const l = s.layers.find((x) => x.type === "symbol"); return (l && l.id) || want; };
+          const slot = () => { const want = cfg.labels_slot || "watername_ocean"; const s = map && map.getStyle && map.getStyle(); if (!s || !s.layers || s.layers.some((x) => x.id === want)) return want; const l = s.layers.find((x) => x.type === "symbol"); return (l && l.id) || want; };
           // every imagery year stays mounted once the view is close enough, the
           // ones not shown at opacity 0, so their tiles load ahead and a scroll
           // while holding is instant
