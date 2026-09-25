@@ -54,7 +54,7 @@ produced by Google and Google DeepMind" (CC BY 4.0). ESA WorldCover 10 m
 data (2021) processed by the ESA WorldCover consortium (CC BY 4.0).
 Sentinel-2 yearly mosaics by Earth Genome (CC BY 4.0). Photon (komoot) over
 OpenStreetMap data (ODbL). Overture Maps divisions for place names (ODbL).
-Basemap by Carto.
+Basemap by OpenFreeMap (OpenMapTiles, OpenStreetMap data).
 """
 
 import marimo
@@ -75,6 +75,7 @@ def _():
     import traceback
     import urllib.parse
     import urllib.request
+    import zlib
 
     import numpy as np
     import pyarrow as pa
@@ -91,6 +92,7 @@ def _():
     from async_geotiff import GeoTIFF, Window
     from datafusion import udf
     from xarray_sql import XarrayContext
+    from h3ronpy import change_resolution
     from h3ronpy.vector import coordinates_to_cells
     from pyproj import Transformer
 
@@ -121,6 +123,7 @@ def _():
         XarrayContext,
         anywidget,
         asyncio,
+        change_resolution,
         coordinates_to_cells,
         cpu,
         duckdb,
@@ -141,6 +144,7 @@ def _():
         urllib,
         xr,
         zarr,
+        zlib,
     )
 
 
@@ -265,11 +269,13 @@ def _(os, tempfile):
     VIEW_W, VIEW_H = 700, 780
     PAD = 1.3
     SETTLE = 0.35
-    # hexagons from zoom 7, where the imagery also starts (Stephen, 2026-09-25:
-    # zoomed out "it's just an empty map, which is not good"); the 9 came
-    # over from the atlas, which was about buildings
-    HEX_ZOOM = 8.0
-    LABELS_SLOT = "watername_ocean"
+    # hexagons from zoom 9, WorldCover below (Stephen, 2026-09-25: the
+    # hexagons as tiles "making my computer hum", so a min zoom for zoomed
+    # out; zoomed in stays)
+    HEX_ZOOM = 9.0
+    # OpenFreeMap dark (Stephen, 2026-09-25); the map layers go in under its
+    # first road name, so roads sit beneath them and the labels above
+    LABELS_SLOT = "highway_name_other"
     RASTER_TILE = 256
     HOME = {"longitude": 114.29, "latitude": 30.58, "zoom": 7.2}  # Wuhan, the pair notebook's start
 
@@ -277,8 +283,27 @@ def _(os, tempfile):
     # may drift before it counts as a pan instead
     HOLD_MS, HOLD_SLOP_PX = 200, 5
 
+    # the hexagons reach the browser as tiles of cell numbers, not polygons
+    # (Stephen, 2026-09-25: "send the hexagons as imagery"): each 256 px map
+    # tile is drawn at HEX_TILE_PX a side, every pixel the row of the hexagon
+    # it falls in, coloured in the browser
+    HEX_TILE_PX = 512
+    # the zoom ladder below picks the READ res (which AlphaEarth overview is
+    # read). With the hexagons drawn as an image their count no longer costs
+    # the browser, so two knobs, same download:
+    # HEX_UP: the hexagons drawn are this many levels finer than the read res
+    #   (1 is about one hexagon per pixel of the read; past that, empty cells)
+    # CARRY_RES: the fold runs this many levels finer than the hexagons drawn,
+    #   and each hexagon shows its most-changed finer cell ("carry the peak"),
+    #   so a small change is not averaged away zoomed out
+    # (0, 1): hexagons at the read res, each its brightest patch
+    # (1, 0): hexagons about a pixel of the read each, nothing carried
+    HEX_UP = 0
+    CARRY_RES = 1
+
+    # the fill fades with how much the cell changed: quiet ground faint
     ALPHA_FILL = 235
-    ALPHA_QUIET = 70
+    ALPHA_QUIET = 45
     VIRIDIS = "440154470d6048186a482374472e7c4538824241863e4a893a548c365d8d32658e2e6d8e2b758e287d8e25848e228c8d1f948c1e9c8920a38625ab822eb37c3aba7648c16e58c7656ccd5a7fd34e93d741a8db34c0df25d5e21aeae51afde725"
     return (
         ADMIN_PQ,
@@ -297,7 +322,10 @@ def _(os, tempfile):
         ALPHA_QUIET,
         BASE_RES,
         CACHE_DIR,
+        CARRY_RES,
         CELL_BUDGET,
+        HEX_TILE_PX,
+        HEX_UP,
         HEX_ZOOM,
         HOLD_MS,
         HOLD_SLOP_PX,
@@ -579,12 +607,15 @@ def _(
         emb = await _mosaic(_ti[year], y0, y1, x0, x1)
         return emb, AEF_X0 + x0 * AEF_RES, AEF_Y0 - y0 * AEF_RES, AEF_RES
 
-    async def aef_fold(box, res, year):
-        """Mean AlphaEarth vector per res cell over the box for one year.
+    async def aef_fold(box, res, year, read_res=None):
+        """Mean AlphaEarth vector per res cell over the box for one year, from
+        the source that suits read_res (default res): a finer res than the
+        read's own gives cells of about a pixel each (the carried peak).
         Returns (arrow table or None, stats)."""
         t0 = time.time()
         W_, S_, E_, N_ = box
-        if res >= MOSAIC_MIN_RES:
+        rr = res if read_res is None else read_res
+        if rr >= MOSAIC_MIN_RES:
             x0, x1 = int((W_ - AEF_X0) / AEF_RES), int((E_ - AEF_X0) / AEF_RES)
             y0, y1 = int((AEF_Y0 - N_) / AEF_RES), int((AEF_Y0 - S_) / AEF_RES)
             emb = await _mosaic(_ti[year], y0, y1, x0, x1)
@@ -598,7 +629,7 @@ def _(
 
             out = await cpu(_mosaic)
             return out, f"AEF {year} mosaic {t1 - t0:.1f} s · fold {out.num_rows:,} {time.time() - t1:.1f} s"
-        li = AEF_LEVEL_FOR_RES[res]
+        li = AEF_LEVEL_FOR_RES[rr]
         ix = _IDX[year]
         hit = np.where(
             (ix["wgs84_east"] > W_) & (ix["wgs84_west"] < E_) & (ix["wgs84_north"] > S_) & (ix["wgs84_south"] < N_)
@@ -1155,7 +1186,7 @@ def _(
 
 
 @app.cell
-def _(WC_CLASSES, WC_CODES, con, np, pa):
+def _(WC_CLASSES, WC_CODES, change_resolution, con, np, pa):
     # ---- a FRAME: AlphaEarth over the window, the land cover beside it ----------
     # No quiet level this time (it came from WSF, which is out): the fill is
     # how much the fingerprint moved between the window's two ends, stretched
@@ -1165,10 +1196,17 @@ def _(WC_CLASSES, WC_CODES, con, np, pa):
     # 2024 to 2025 median step is 0.034, the others 0.012 to 0.022), so the
     # raw biggest step lands on 2025 almost everywhere. Each step is divided
     # by its year's median; the card shows those ratios against 1.
+    #
+    # CARRY THE PEAK: the years arrive folded at a finer res than the
+    # hexagons (about a pixel of the read per finer cell). Steps, change and
+    # change year are worked out per finer cell; each hexagon then takes the
+    # finer cell that moved most, whole (its change, its year, its steps).
+    # A hexagon reads "the most-changed patch in here", not "the average of
+    # in here", so one changed site is not diluted by the quiet ground around it.
     _E = [f"e{i:02d}" for i in range(64)]
     _WC_NAME = dict(WC_CLASSES)
 
-    def build_frame(aef_by_year, wc, y0, y1):
+    def build_frame(aef_by_year, wc, y0, y1, res):
         years = [y for y in range(y0, y1 + 1) if aef_by_year.get(y) is not None]
         if len(years) < 2:
             return None
@@ -1178,12 +1216,8 @@ def _(WC_CLASSES, WC_CODES, con, np, pa):
         for y in years:
             sel += [f"a{y}.{e} AS {e}_{y}" for e in _E]
         joins = [f"LEFT JOIN aef_{y} a{y} USING (cell)" for y in years[1:]]
-        if wc is not None:
-            con.register("wc_cells", wc)
-            sel += ["w.nwc"] + [f"w.wc{c}" for c in WC_CODES]
-            joins.append("LEFT JOIN wc_cells w USING (cell)")
         j = con.execute(f"SELECT {', '.join(sel)} FROM aef_{years[0]} a{years[0]} {' '.join(joins)} ORDER BY cell").arrow().read_all()
-        n = j.num_rows
+        nfine = j.num_rows
 
         def _V(y):
             V = np.stack([j[f"{e}_{y}"].to_numpy(zero_copy_only=False) for e in _E], axis=1).astype(np.float32)
@@ -1206,6 +1240,19 @@ def _(WC_CLASSES, WC_CODES, con, np, pa):
         k = np.argmax(np.where(np.isnan(rel), -np.inf, rel), 0)
         yb = np.array([b for _, b in step_years], np.int64)
         big = np.where(has, yb[k], -2).astype(np.int64)
+
+        # the peak: per hexagon, its finer cell with the biggest change
+        fine = j["cell"].to_numpy().astype(np.uint64)
+        par = pa.array(change_resolution(fine, res)).to_numpy(zero_copy_only=False).astype(np.uint64)
+        o = np.lexsort((-np.where(np.isnan(disp), -np.inf, disp), par))
+        ps = par[o]
+        first = np.r_[True, ps[1:] != ps[:-1]] if len(ps) else np.zeros(0, bool)
+        pk = o[first]
+        cellid = ps[first]
+        n = len(cellid)
+        nkids = np.diff(np.r_[np.flatnonzero(first), len(ps)]).astype(np.int32)
+        disp, big, steps, rel = disp[pk], big[pk], steps[:, pk], rel[:, pk]
+
         scored = ~np.isnan(disp)
         if scored.sum() >= 2:
             lo, hi = (float(q) for q in np.percentile(disp[scored], [2, 98]))
@@ -1214,22 +1261,27 @@ def _(WC_CLASSES, WC_CODES, con, np, pa):
             lo, hi = 0.0, 1.0
         level = np.where(scored, np.clip((np.nan_to_num(disp) - lo) / (hi - lo), 0, 1), np.nan).astype(np.float32)
 
-        if wc is not None:
-            nwc = j["nwc"].to_numpy(zero_copy_only=False).astype(np.float64)
-            nwc = np.nan_to_num(nwc)
-            C = np.stack([np.nan_to_num(j[f"wc{c}"].to_numpy(zero_copy_only=False).astype(np.float64)) for c in WC_CODES], 1)
-            share = C / np.maximum(nwc, 1)[:, None]
-        else:
-            nwc = np.zeros(n)
-            share = np.zeros((n, len(WC_CODES)))
+        nwc = np.zeros(n)
+        share = np.zeros((n, len(WC_CODES)))
+        if wc is not None and wc.num_rows:
+            wcell = wc["cell"].to_numpy().astype(np.uint64)
+            ow = np.argsort(wcell)
+            wcell = wcell[ow]
+            pos = np.clip(np.searchsorted(wcell, cellid), 0, len(wcell) - 1)
+            m = wcell[pos] == cellid
+            wn = np.nan_to_num(wc["nwc"].to_numpy(zero_copy_only=False).astype(np.float64))[ow]
+            nwc = np.where(m, wn[pos], 0.0)
+            C = np.stack([np.nan_to_num(wc[f"wc{c}"].to_numpy(zero_copy_only=False).astype(np.float64))[ow][pos] for c in WC_CODES], 1)
+            share = np.where(m[:, None], C, 0.0) / np.maximum(nwc, 1)[:, None]
         top = np.where(nwc > 0, share.argmax(1), -1)
         top_share = np.where(nwc > 0, share.max(1), 0.0)
 
         cells = pa.table({
-            "cell": j["cell"],
+            "cell": pa.array(cellid),
             "disp": pa.array(disp),
             "level": pa.array(level),
             "big_year": pa.array(big.astype(np.int16)),
+            "finer_cells": pa.array(nkids),
             **{f"step_{b}": pa.array(steps[i]) for i, (_, b) in enumerate(step_years)},
             **{f"rel_{b}": pa.array(rel[i]) for i, (_, b) in enumerate(step_years)},
             "landcover": pa.array([_WC_NAME[WC_CODES[t]] if t >= 0 else None for t in top]),
@@ -1237,10 +1289,10 @@ def _(WC_CLASSES, WC_CODES, con, np, pa):
             **{f"wc_{_WC_NAME[c].replace(' ', '_')}": pa.array(share[:, i].astype(np.float32)) for i, c in enumerate(WC_CODES)},
         })
         return {
-            "cells": cells, "cellid": j["cell"].to_numpy().astype(np.uint64), "disp": disp, "level": level, "big": big,
+            "cells": cells, "cellid": cellid, "res": res, "disp": disp, "level": level, "big": big,
             "steps": steps, "rel": rel, "med": med, "step_years": step_years, "years": years, "y0": y0, "y1": y1,
             "shift_lo": lo, "shift_hi": hi, "share": share, "nwc": nwc, "top": top, "top_share": top_share,
-            "score": f"AEF {years[0]} to {years[-1]}: {int(scored.sum()):,} of {n:,} cells scored, median steps "
+            "score": f"AEF {years[0]} to {years[-1]}: {int(scored.sum()):,} of {n:,} cells scored, peak of {nfine:,} finer cells, median steps "
                      + ", ".join(f"{b} {m:.3f}" for (_, b), m in zip(step_years, med)),
         }
 
@@ -1409,7 +1461,7 @@ def _(anywidget, asyncio, traitlets):
         import {Protocol as PMProtocol} from "https://esm.sh/pmtiles@4.5.0";
         maplibregl.addProtocol("pmtiles", new PMProtocol().tile);
 
-        const STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+        const STYLE = "https://tiles.openfreemap.org/styles/dark";
         const FONTS = "https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&display=swap";
         const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
         const fmt = (n) => Number(n).toLocaleString("en-US");
@@ -1574,7 +1626,7 @@ def _(anywidget, asyncio, traitlets):
             <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: move it off what you want to see, drag the map to look around, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
             <p><b>Click</b> a hexagon for its account: each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. WorldCover is one map of one year, so it says what a place is, not when it changed.</p>
             <p><small>Keys: hold space for the imagery, scroll for its year; S how much it changed, D the year of the biggest change; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search; Esc close.</small></p>
-            <p><small>AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions (ODbL), the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
+            <p><small>AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions (ODbL), the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by OpenFreeMap (OpenMapTiles, OpenStreetMap data).</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
           pane.appendChild(about);
           about.querySelector("button").onclick = () => { about.style.display = "none"; };
@@ -1626,17 +1678,19 @@ def _(anywidget, asyncio, traitlets):
           const pngBitmap = (u8) => createImageBitmap(new Blob([u8], {type: "image/png"}));
 
           // ---- the hexagons -----------------------------------------------------------
-          let hexes = [], N = 0, res = -1, hexIndex = new Map(), hattrs = null, hmeta = {}, hcol = null, hexSeq = 0, hexData = {length: 0}, hover = null, picked = null, imgPick = null;
+          let hexes = [], N = 0, res = -1, hexIndex = new Map(), hattrs = null, hmeta = {}, hcol = null, hcol32 = null, hexSeq = 0, hover = null, picked = null, imgPick = null;
           function recolorHex() {
-            if (!N || !hattrs || hattrs.length !== 4 * N) { hcol = null; return; }
+            if (!N || !hattrs || hattrs.length !== 4 * N) { hcol = null; hcol32 = null; return; }
             hcol = new Uint8Array(4 * N);
+            hcol32 = new Uint32Array(hcol.buffer);
             const y0 = hmeta.y0 || st.y0, y1 = hmeta.y1 || st.y1, span = Math.max(1, y1 - y0 - 1);
             for (let i = 0; i < N; i++) {
               const o = 4 * i, yc_ = hattrs[o], lv = hattrs[o + 1];
               if (!lv) continue;
               const t = (lv - 1) / 254;
               let col, a;
-              if (st.gmode === "much") { col = vir(t); a = A_FILL; }
+              // quiet ground faint, change in full ink (Stephen, 2026-09-25)
+              if (st.gmode === "much") { col = vir(t); a = Math.round(A_QUIET + (A_FILL - A_QUIET) * t); }
               else if (yc_) { col = yob(y1 - y0 > 1 ? (2000 + yc_ - (y0 + 1)) / span : 1); a = Math.round(A_QUIET + (A_FILL - A_QUIET) * t); }
               else continue;
               hcol[o] = col[0]; hcol[o + 1] = col[1]; hcol[o + 2] = col[2]; hcol[o + 3] = a;
@@ -1800,7 +1854,7 @@ def _(anywidget, asyncio, traitlets):
 
           // ---- the layers --------------------------------------------------------------
           let map = null, ov = null;
-          const slot = () => { const want = cfg.labels_slot || "watername_ocean"; const s = map && map.getStyle && map.getStyle(); if (!s || !s.layers || s.layers.some((x) => x.id === want)) return want; const l = s.layers.find((x) => x.type === "symbol"); return (l && l.id) || want; };
+          const slot = () => { const want = cfg.labels_slot || "highway_name_other"; const s = map && map.getStyle && map.getStyle(); if (!s || !s.layers || s.layers.some((x) => x.id === want)) return want; const l = s.layers.find((x) => x.type === "symbol"); return (l && l.id) || want; };
           // every imagery year stays mounted once the view is close enough, the
           // ones not shown at opacity 0, so their tiles load ahead and a scroll
           // while holding is instant
@@ -1820,6 +1874,40 @@ def _(anywidget, asyncio, traitlets):
             tileSize: cfg.tile || 256, minZoom: cfg.wc_min_z || 4, maxZoom: Math.ceil(HEXZ) - 1, refinementStrategy: "best-available", debounceTime: 120, beforeId: slot(),
             renderSubLayers: (p) => { if (!p.data) return null; const {west, south, east, north} = p.tile.bbox; return new BitmapLayer(p, {data: null, image: p.data, bounds: [west, south, east, north]}); },
           });
+          // the hexagons: tiles of cell numbers from the kernel (1 + the row in
+          // this frame, 0 none), coloured here from hcol, so a mode or window
+          // change repaints without a round trip. A tile from an older frame
+          // keeps its last picture until the new frame's tile replaces it.
+          const unz = async (u8) => new Uint32Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
+          function paintTile(d) {
+            if (d.seq !== hmeta.seq || !hcol32) return d.canvas || null;
+            if (d.canvas && d.cseq === hexSeq) return d.canvas;
+            const n = d.side, img = new ImageData(n, n), px = new Uint32Array(img.data.buffer), ids = d.ids;
+            for (let i = 0; i < ids.length; i++) { const k = ids[i]; if (k) px[i] = hcol32[k - 1]; }
+            const c = document.createElement("canvas");
+            c.width = n; c.height = n;
+            c.getContext("2d").putImageData(img, 0, 0);
+            d.canvas = c; d.cseq = hexSeq;
+            return c;
+          }
+          const hexLayer = (visible) => new TileLayer({
+            id: "hexes", visible,
+            getTileData: async ({index, signal}) => {
+              const seq = hmeta.seq, u8 = await ask("hex", seq, index, signal);
+              if (!u8) return null;
+              const ids = await unz(u8);
+              return {ids, seq, side: Math.round(Math.sqrt(ids.length))};
+            },
+            onTileError: (e) => { if (!e || (e.name !== "AbortError" && !/stale/.test(e.message || ""))) say("hexagon tile: " + ((e && e.message) || e)); },
+            tileSize: 256, minZoom: Math.floor(HEXZ), maxZoom: 17, refinementStrategy: "best-available", debounceTime: 60, beforeId: slot(),
+            updateTriggers: {getTileData: [hmeta.seq], renderSubLayers: [hexSeq, hmeta.seq]},
+            renderSubLayers: (p) => {
+              const im = p.data ? paintTile(p.data) : null;
+              if (!im) return null;
+              const {west, south, east, north} = p.tile.bbox;
+              return new BitmapLayer(p, {data: null, image: im, bounds: [west, south, east, north], textureParameters: {minFilter: "linear", magFilter: "nearest"}});
+            },
+          });
           const ring = (h) => { try { return cellToBoundary(h, true); } catch (e) { return null; } };
           const outline = (id, h, color, width) => { const r = h ? ring(h) : null; return r ? new PathLayer({id, data: [r], getPath: (d) => d, getColor: color, widthUnits: "pixels", getWidth: width, beforeId: slot()}) : null; };
           function layers() {
@@ -1830,12 +1918,8 @@ def _(anywidget, asyncio, traitlets):
             // while holding: the imagery, and over it only the two outlines
             // (Stephen, 2026-09-25: the selected hexagon "should appear on the
             // satellite", white on hover and gold when picked, as in the pair)
-            if (!st.holding && hcol && z >= HEXZ) out.push(new H3HexagonLayer({
-              id: "hexes", data: hexData, getHexagon: (_, {index}) => hexes[index],
-              getFillColor: (_, {index}) => [hcol[4 * index], hcol[4 * index + 1], hcol[4 * index + 2], hcol[4 * index + 3]],
-              updateTriggers: {getFillColor: [hexSeq], getHexagon: [hexSeq]},
-              filled: true, stroked: false, extruded: false, highPrecision: true, pickable: false, beforeId: slot(),
-            }));
+            // kept in the stack while hidden (holding, zoomed out) so its tiles stay cached
+            if (hmeta.seq) out.push(hexLayer(!st.holding && !!hcol && z >= HEXZ));
             const hv = hover != null && hover >= 0 ? outline("hover", hexes[hover], [255, 255, 255, 235], 2) : null;
             if (hv) out.push(hv);
             const pk = picked ? outline("picked", picked, [255, 200, 40, 255], 3) : null;
@@ -2070,13 +2154,9 @@ def _(anywidget, asyncio, traitlets):
           const loadHex = () => {
             const cb = bytesOf(model.get("cells")), ab = bytesOf(model.get("hattrs"));
             try { hmeta = JSON.parse(model.get("hmeta") || "{}"); } catch (e) { hmeta = {}; }
-            if (!cb || !cb.length) { hexes = []; N = 0; hexIndex = new Map(); res = -1; hattrs = null; hcol = null; renderYear(); styleKey(); update(); return; }
+            if (!cb || !cb.length) { hexes = []; N = 0; hexIndex = new Map(); res = -1; hattrs = null; hcol = null; hcol32 = null; renderYear(); styleKey(); update(); return; }
             const ids = new BigUint64Array(copyOf(cb));
             N = ids.length; hexes = new Array(N); hexIndex = new Map();
-            // ONE data object per frame: deck compares `data` by reference, and a
-            // new {length: N} on every update() (each hover, pan, card) re-tessellated
-            // every hexagon (150 to 190 ms a time for ~25k, measured 2026-09-25)
-            hexData = {length: N};
             for (let i = 0; i < N; i++) { const h = ids[i].toString(16); hexes[i] = h; hexIndex.set(h, i); }
             try { res = getResolution(hexes[0]); } catch (e) { res = -1; }
             hattrs = ab && ab.length === 4 * N ? new Uint8Array(copyOf(ab)) : null;
@@ -2158,7 +2238,10 @@ def _(
 @app.cell
 def _(
     AEF_YEARS_ALL,
+    CARRY_RES,
     CELL_KM2,
+    HEX_TILE_PX,
+    HEX_UP,
     HEX_ZOOM,
     HOLD,
     HOME,
@@ -2170,10 +2253,12 @@ def _(
     build_frame,
     cmap,
     contains,
+    coordinates_to_cells,
     cpu,
     division_at,
     json,
     np,
+    pa,
     pad_box,
     res_for_view,
     s2_set_scale,
@@ -2183,6 +2268,7 @@ def _(
     view_to_bbox,
     wc_fold,
     wc_tile_png,
+    zlib,
 ):
     # ---- wiring: the camera loop, the click and the controls. Re-runs freely. -----
     try:
@@ -2192,9 +2278,33 @@ def _(
     HOLD["runs"] += 1
     _WC_NAME = dict(WC_CLASSES)
 
+    def _hex_tile(fr, z, x, y):
+        """A map tile of the frame's hexagons as cell numbers: HEX_TILE_PX a
+        side, each pixel 1 + the frame row of the hexagon its centre falls in
+        (0 none), uint32 little-endian, deflated. The browser colours it."""
+        T, n = HEX_TILE_PX, 2 ** z
+        f = (np.arange(T) + 0.5) / T
+        lon = (x + f) / n * 360.0 - 180.0
+        lat = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * (y + f) / n))))
+        LON, LAT = np.meshgrid(lon, lat)
+        c = pa.array(coordinates_to_cells(LAT.ravel(), LON.ravel(), fr["res"])).to_numpy(zero_copy_only=False).astype(np.uint64)
+        ids = fr["cellid"]
+        if not len(ids):
+            return None
+        i = np.clip(np.searchsorted(ids, c), 0, len(ids) - 1)
+        hit = ids[i] == c
+        if not hit.any():
+            return None
+        return zlib.compress(np.where(hit, i + 1, 0).astype("<u4").tobytes(), 1)
+
     async def _tile_fn(src, z, x, y, year):
         if src == "wc":
             return await wc_tile_png(z, x, y)
+        if src == "hex":
+            fr = HOLD["frame"]
+            if fr is None or fr.get("seq") != year:
+                raise RuntimeError("stale hexagon frame")
+            return await cpu(_hex_tile, fr, z, x, y)
         return await s2_tile_png(z, x, y, year)
 
     cmap.tile_fn = _tile_fn
@@ -2259,6 +2369,7 @@ def _(
             cmap.hattrs = np.ascontiguousarray(np.stack([yc, lb, tc, ts], 1)).tobytes()
             cmap.hmeta = json.dumps({
                 "y0": int(fr["years"][0]), "y1": int(fr["years"][-1]), "km2": float(CELL_KM2.get(HOLD["res"], 0)),
+                "seq": int(fr.get("seq", 0)), "carry": CARRY_RES,
                 "classes": [_WC_NAME[c] for c in WC_CODES],
             })
         HOLD["sent"] = fr
@@ -2266,9 +2377,11 @@ def _(
     async def _serve_hex(vsd, force=False):
         view = view_to_bbox(vsd)
         box = pad_box(view)
-        if HOLD["box"] is not None and contains(HOLD["box"], view) and not force and res_for_view(vsd, box) <= HOLD["res"]:
+        if HOLD["box"] is not None and contains(HOLD["box"], view) and not force and min(15, res_for_view(vsd, box) + HEX_UP) <= HOLD["res"]:
             return
-        res = res_for_view(vsd, box)
+        rres = res_for_view(vsd, box)
+        res = min(15, rres + HEX_UP)
+        fres = min(15, res + CARRY_RES)
         y0, y1 = HOLD["y0"], HOLD["y1"]
         rbox = tuple(round(v, 3) for v in box)
         key = (y0, y1, res, rbox)
@@ -2284,7 +2397,7 @@ def _(
             wneed = bkey not in HOLD["wc"]
             got = await asyncio.gather(
                 wc_fold(box, res) if wneed else asyncio.sleep(0, result=HOLD["wc"].get(bkey)),
-                *(aef_fold(box, res, y) for y in need),
+                *(aef_fold(box, fres, y, read_res=rres) for y in need),
             )
             if wneed:
                 HOLD["wc"][bkey] = got[0]
@@ -2296,11 +2409,13 @@ def _(
             wc, s_wc = HOLD["wc"][bkey]
             aef_by_year = {y: HOLD["aef"][(y, bkey)][0] for y in years if (y, bkey) in HOLD["aef"]}
             t1 = time.time()
-            fr = await cpu(build_frame, aef_by_year, wc, y0, y1)
+            fr = await cpu(build_frame, aef_by_year, wc, y0, y1, res)
             if fr is None:
                 HOLD["hex_status"] = f"hexagons: res {res}, AlphaEarth has fewer than two years here | " + " | ".join(HOLD["aef"][(y, bkey)][1] for y in years if (y, bkey) in HOLD["aef"])
                 return
-            stats = f"res {res} | {s_wc} | frame {time.time() - t1:.1f} s"
+            HOLD["fseq"] = HOLD.get("fseq", 0) + 1
+            fr["seq"] = HOLD["fseq"]
+            stats = f"read res {rres}, hexagons res {res}, peak of res {fres} | {s_wc} | frame {time.time() - t1:.1f} s"
             HOLD["memo"][key] = (fr, stats)
             while len(HOLD["memo"]) > 12:
                 HOLD["memo"].pop(next(iter(HOLD["memo"])))
@@ -2519,14 +2634,27 @@ def _(mo):
     (2021 to 2025 by default, 2017 to 2025 available) from Source
     Cooperative: the COG overviews at coarser hexagons, the zarr mosaic
     from res 11 in. Each pixel's lon/lat goes through an h3ronpy UDF inside
-    DataFusion (via xarray-sql), and the pixels are averaged per hexagon,
+    DataFusion (via xarray-sql), and the pixels are averaged per cell,
     one fold per year. The hexagon size follows the zoom.
+
+    **The brightest patch, not the average.** The fold runs one H3 level
+    finer than the hexagons on screen, about one pixel of the read per finer
+    cell, and the change is worked out per finer cell. Each hexagon then
+    shows its most-changed finer cell: its change, its year, its steps. So
+    one changed site inside a big hexagon keeps it bright zoomed out,
+    instead of being averaged away by the quiet ground around it.
+
+    **Drawn as tiles.** The hexagons reach the browser as map tiles in
+    which every pixel names the hexagon it falls in, coloured in the
+    browser; hover and click look the hexagon up from the pointer with
+    h3-js. The browser draws images, however many hexagons there are.
 
     **How much it changed (viridis).** Each hexagon's yearly vector is
     normalised, and `disp` is 1 minus the cosine between the window's first
     and last year: 0 means the fingerprint did not move. The fill stretches
     `disp` to this view's 2nd to 98th percentile, so the colours rank the
-    hexagons against their neighbours, not against the world.
+    hexagons against their neighbours, not against the world. Hexagons
+    that barely moved are drawn faint.
 
     **When it changed (YlOrBr, `D`).** Every year-to-year step is scored
     the same way. The embeddings drift as a whole between some years (over
@@ -2541,11 +2669,11 @@ def _(mo):
     hexagon, shown as shares. It is one year only, so it describes the
     ground; it does not date anything.
 
-    **Zoomed out (below zoom 8).** The map is WorldCover itself, drawn as
+    **Zoomed out (below zoom 9).** The map is WorldCover itself, drawn as
     tiles from the same COGs (the coarsest overview that still fills each
     tile), in a palette without red: built-up deep violet, cropland gold,
     vegetation in greens, water blue. It shows where the towns, farmland and
-    water are; from zoom 8 the AlphaEarth change hexagons take over.
+    water are; from zoom 9 the AlphaEarth change hexagons take over.
 
     **What happened (Sentinel-2).** Holding the map swaps the hexagons for
     Earth Genome's yearly true-colour mosaic, 2022 to 2025, so the change
@@ -2565,7 +2693,8 @@ def _(mo):
     AlphaEarth fingerprint moved between the first and last year read, 1
     minus the cosine), `level` (the same, stretched to this view's p2 to p98),
     `big_year` (the year whose step stands out most against that year's
-    median step in view, -2 no data), one `step_YYYY` column per step and
+    median step in view, -2 no data), `finer_cells` (how many finer cells
+    it holds; the row's numbers are its most-changed one), one `step_YYYY` column per step and
     one `rel_YYYY` with that step over the year's median, `landcover` and `landcover_share` (the main
     ESA WorldCover 2021 class), and one `wc_` column per class with its share.
     """)
