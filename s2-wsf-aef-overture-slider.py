@@ -2231,12 +2231,25 @@ def _(anywidget, asyncio, traitlets):
             else return;
             e.preventDefault();
           });
+          const ERR = /failed|error|zoom in|no match|search:|timed? ?out|^(deck|map|footprints|load|boot|grab \w+|\w+ tile):/i;
           const say = (t) => {
-            status.textContent = t || "";
-            // only what needs attention: a failure, or "zoom in" (Stephen,
-            // 2026-09-24: "i dont want to see this printout unless its an error
-            // i need to know"); progress and the finished tallies stay hidden
-            if (cfg.minimal) status.hidden = !/failed|error|zoom in|no match|search:|timed? ?out|^(deck|map|footprints|load|boot|grab \w+|\w+ tile):/i.test(t || "");
+            t = t || "";
+            if (!cfg.minimal) { status.textContent = t; return; }
+            // a failure or "zoom in" in full; while working, only WHICH data is
+            // loading (Stephen, 2026-09-24: "it can say which data sets ...
+            // it's loading, it doesn't have to be so verbose"); the finished
+            // tallies stay hidden
+            if (ERR.test(t)) { status.textContent = t; status.hidden = false; return; }
+            const busy = t.split(" · ").filter((p) => p.includes("\u2026"));
+            const names = [];
+            const add = (n) => { if (!names.includes(n)) names.push(n); };
+            for (const p of busy) {
+              if (/footprint|Overture/i.test(p)) add("buildings");
+              if (/WSF/.test(p)) add("WSF");
+              if (/AlphaEarth|AEF|hexagon/i.test(p)) add("AlphaEarth");
+            }
+            status.textContent = names.length ? "loading " + names.join(", ") + "\u2026" : "";
+            status.hidden = !names.length;
           };
           const renderLegend = () => {
             legend.replaceChildren();
