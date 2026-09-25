@@ -1379,6 +1379,21 @@ def _(anywidget, asyncio, traitlets):
         .seg-s button{border:0;background:none;color:var(--muted);padding:3px 10px;border-radius:7px;cursor:pointer}
         .seg-s button:hover{color:var(--text)}
         .seg-s button.on{background:var(--text);color:#fff}
+        .seg-s.col{flex-direction:column;align-items:stretch}
+        .seg-s.col button{text-align:left}
+        .at-row.top{align-items:flex-start}
+        .at-row.top .at-lab{padding-top:5px}
+        .at-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px -4px -2px 0}
+        .at-hd .t{font-size:12.5px;font-weight:600}
+        .at-cb{flex:0 0 auto;border:0;background:none;color:var(--muted);cursor:pointer;width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;padding:0}
+        .at-cb:hover{background:var(--sel);color:var(--text)}
+        .at-cb svg{transition:transform .15s}
+        .collapsed .at-cb svg{transform:rotate(-90deg)}
+        .at-panel.collapsed .at-row:not(.keep){display:none}
+        .at-yc .yr .at-cb{margin-left:auto;align-self:flex-start;margin-top:-4px;margin-right:-8px}
+        .at-yc.collapsed{width:auto}
+        .at-yc.collapsed .yr span{max-width:120px}
+        .at-yc.collapsed>:not(.yr){display:none}
         .at-key{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px 8px;font-size:12.5px;color:var(--muted)}
         .at-ramp{height:10px;border-radius:3px;width:150px}
         .at-win{position:relative;width:170px;height:28px;flex:0 0 auto}
@@ -1480,6 +1495,7 @@ def _(anywidget, asyncio, traitlets):
           search: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
           more: '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
           expand: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+          chev: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 9l6 6 6-6"/></svg>',
           shrink: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>',
         };
         // how much a hexagon moved, in words, from its 0..1 level in this view
@@ -1532,18 +1548,29 @@ def _(anywidget, asyncio, traitlets):
           const hits = el_("div", "at-hits at-glass");
           search.append(gc, hits);
           const panel = el_("div", "at-panel at-glass");
+          // every panel folds (Stephen, 2026-09-25); the fold is remembered in this browser
+          const keep = (k, v) => { try { if (v === undefined) return localStorage.getItem("aef-lc-" + k) === "1"; localStorage.setItem("aef-lc-" + k, v ? "1" : "0"); } catch (e) {} return false; };
+          const panelHd = el_("div", "at-hd", `<span class="t">AlphaEarth change</span>`);
+          const panelCb = el_("button", "at-cb", ICON.chev);
+          panelHd.appendChild(panelCb);
+          panel.appendChild(panelHd);
+          const foldPanel = (on) => { panel.classList.toggle("collapsed", on); panelCb.title = on ? "show the controls" : "fold the controls"; keep("panel", on); };
+          panelCb.onclick = (e) => { e.stopPropagation(); foldPanel(!panel.classList.contains("collapsed")); };
+          foldPanel(keep("panel"));
           const rowOf = (label) => { const r = el_("div", "at-row"); if (label) r.appendChild(el_("span", "at-lab", label)); panel.appendChild(r); return r; };
           const segOf = (row, items, isOn, onClick) => {
-            const seg = el_("div", "seg-s");
+            const seg = el_("div", "seg-s col");
             const bs = items.map(([k, label, title]) => { const b = el_("button", "", label); b.title = title || ""; b.onclick = () => onClick(k); seg.appendChild(b); return b; });
             row.appendChild(seg);
             return () => items.forEach(([k], i) => bs[i].classList.toggle("on", isOn(k)));
           };
           const rFill = rowOf("Colour by");
+          rFill.classList.add("top");
           const styleFill = segOf(rFill, [["much", "How much it changed", "how far the ground's AlphaEarth numbers moved between the first and last year read (S)"],
                                           ["year", "Year of the biggest change", "the year each hexagon's change stood out most against the usual change that year, faded where the ground barely moved (D)"]],
                                   (k) => k === st.gmode, (k) => { st.gmode = k; recolorHex(); styleRows(); update(); });
           const rKey = rowOf("");
+          rKey.classList.add("keep");
           const keyEl = el_("span", "at-key");
           rKey.appendChild(keyEl);
           // the window: the years AlphaEarth is read over; drag either end, it rereads on release
@@ -1578,6 +1605,7 @@ def _(anywidget, asyncio, traitlets):
           try { new ResizeObserver(styleWin).observe(win); } catch (e) {}
           function styleKey() {
             const y0 = hmeta.y0 || st.y0, y1 = hmeta.y1 || st.y1;
+            panelHd.querySelector(".t").textContent = map && map.getZoom() < HEXZ ? "Land cover" : "AlphaEarth change";
             if (map && map.getZoom() < HEXZ) {
               keyEl.innerHTML = `land cover, ESA WorldCover 2021: ` + (cfg.wc_key || []).map(([nm, hx]) => `<span style="display:inline-flex;align-items:center;gap:4px"><i style="width:10px;height:10px;border-radius:2px;background:#${hx}"></i>${esc(nm)}</span>`).join(" ");
               return;
@@ -1791,10 +1819,11 @@ def _(anywidget, asyncio, traitlets):
             if (c.km2) h += `<p class="sub">${c.km2 < 0.1 ? `${Math.round(c.km2 * 1e6).toLocaleString("en-US")} m²` : `${c.km2.toFixed(2)} km²`} hexagon.</p>`;
             return h + `</div>`;
           }
+          let ycFolded = keep("card"), ycOpenedFor = null;
           function renderYear() {
             yc.classList.toggle("holding", st.holding);
             const c = viewCounts();
-            let h = `<div class="yr"><b>${st.imgYear}</b><span>${st.holding ? "Scroll for another year. Let go to see the hexagons." : "Imagery year. Hold space to see it."}</span></div>`;
+            let h = `<div class="yr"><b>${st.imgYear}</b><span>${st.holding ? "Scroll for another year. Let go to see the hexagons." : "Imagery year. Hold space to see it."}</span><button class="at-cb" title="${ycFolded ? "show the card" : "fold the card"}">${ICON.chev}</button></div>`;
             if (N && hattrs) {
               h += `<h4>Where it changed, by year</h4><p class="sub">Hexagons in view that changed a fair amount or more, by the year their change stood out most</p>`;
               h += yearBars(c);
@@ -1803,6 +1832,9 @@ def _(anywidget, asyncio, traitlets):
             yc.innerHTML = h;
             const x = yc.querySelector(".x");
             if (x) x.onclick = () => closeCard();
+            yc.classList.toggle("collapsed", ycFolded);
+            const cb = yc.querySelector(".yr .at-cb");
+            if (cb) cb.onclick = (e) => { e.stopPropagation(); ycFolded = !ycFolded; keep("card", ycFolded); renderYear(); };
             fitCard();
           }
           // the card never scrolls (Stephen, 2026-09-25: "that right panel
@@ -1838,6 +1870,8 @@ def _(anywidget, asyncio, traitlets):
           function renderCard() {
             try { cardData = JSON.parse(model.get("card") || "null"); } catch (e) { cardData = null; }
             picked = cardData && cardData.cell ? cardData.cell : null;
+            // a new click opens a folded card once; folding it again stays folded
+            if (cardData && cardData.n != null && cardData.n !== ycOpenedFor) { ycOpenedFor = cardData.n; if (ycFolded) { ycFolded = false; keep("card", false); } }
             renderYear(); update();
           }
           function closeCard() { model.set("pick", JSON.stringify({close: true, n: ++seq})); model.save_changes(); cardData = null; picked = null; imgPick = null; renderYear(); update(); }
