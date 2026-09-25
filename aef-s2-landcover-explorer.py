@@ -1940,40 +1940,124 @@ def _(anywidget, asyncio, time, traitlets):
           // change repaints without a round trip. A tile from an older frame
           // keeps its last picture until the new frame's tile replaces it.
           const unz = async (u8) => new Uint32Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
-          // the tile's pixels are hard steps along every slanted hexagon edge;
-          // this bitmap filters its own four texels, flat inside a texel and
-          // blended across one screen pixel at each texel boundary ("sharp
-          // bilinear"), premultiplied so an edge next to no hexagon does not
-          // go dark
-          class SmoothBitmapLayer extends BitmapLayer {
+          // hexagon edges drawn from the H3 boundary, not the tile's pixels
+          // (Stephen, 2026-09-25: jagged at z19, where the z17 tiles are
+          // stretched 8x). The tile says which hexagons are near a pixel (its
+          // 3x3 texels, as local indices); each one's ring (h3-js
+          // cellToBoundary, in tile pixel units) gives the fragment's signed
+          // distance to that hexagon, and the hexagon covers the fragment by
+          // that distance over one screen pixel. Smooth at any zoom; an edge
+          // against no hexagon fades to clear.
+          const GEO_W = 64, COL_W = 256;  // hexagons per row of the ring and color textures
+          class HexEdgeLayer extends BitmapLayer {
             getShaders() {
               const s = super.getShaders();
+              s.fs = s.fs.replace("uniform sampler2D bitmapTexture;", "uniform sampler2D bitmapTexture;\nuniform highp sampler2D hexGeom;\nuniform sampler2D hexCol;");
               s.fs = s.fs.replace("vec4 bitmapColor = texture(bitmapTexture, uv);", `
                 ivec2 tsz = textureSize(bitmapTexture, 0);
-                vec2 tp = uv * vec2(tsz) - 0.5, t0 = floor(tp);
-                vec2 tf = clamp((tp - t0 - 0.5) / max(fwidth(tp), vec2(1e-4)) + 0.5, 0.0, 1.0);
-                ivec2 ta = clamp(ivec2(t0), ivec2(0), tsz - 1), tb = clamp(ivec2(t0) + 1, ivec2(0), tsz - 1);
-                vec4 c00 = texelFetch(bitmapTexture, ta, 0), c10 = texelFetch(bitmapTexture, ivec2(tb.x, ta.y), 0);
-                vec4 c01 = texelFetch(bitmapTexture, ivec2(ta.x, tb.y), 0), c11 = texelFetch(bitmapTexture, tb, 0);
-                c00.rgb *= c00.a; c10.rgb *= c10.a; c01.rgb *= c01.a; c11.rgb *= c11.a;
-                vec4 bitmapColor = mix(mix(c00, c10, tf.x), mix(c01, c11, tf.x), tf.y);
-                bitmapColor.rgb /= max(bitmapColor.a, 1e-4);`);
+                vec2 tp = uv * vec2(tsz);
+                ivec2 tc = clamp(ivec2(floor(tp)), ivec2(0), tsz - 1);
+                float pw = max(0.7071 * length(fwidth(tp)), 1e-5);
+                int seen[9]; int ns = 0;
+                vec4 acc = vec4(0.0);
+                float cs = 0.0;  // coverage summed: near a corner the edge distances overlap past one pixel
+                for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+                  vec4 t = texelFetch(bitmapTexture, clamp(tc + ivec2(dx, dy), ivec2(0), tsz - 1), 0);
+                  int k = int(t.r * 255.0 + 0.5) + 256 * int(t.g * 255.0 + 0.5) - 1;
+                  if (k < 0) continue;
+                  bool dup = false;
+                  for (int j = 0; j < 9; j++) { if (j >= ns) break; if (seen[j] == k) dup = true; }
+                  if (dup) continue;
+                  seen[ns] = k; ns++;
+                  vec2 v[10];
+                  for (int j = 0; j < 5; j++) { vec4 g = texelFetch(hexGeom, ivec2(5 * (k % ${GEO_W}) + j, k / ${GEO_W}), 0); v[2 * j] = g.xy; v[2 * j + 1] = g.zw; }
+                  vec2 ctr = vec2(0.0);
+                  for (int j = 0; j < 10; j++) ctr += v[j];
+                  ctr /= 10.0;
+                  float sd = 1e9;
+                  for (int j = 0; j < 10; j++) {
+                    vec2 a = v[j], e = v[(j + 1) % 10] - a;
+                    float L = length(e);
+                    if (L < 1e-6) continue;
+                    vec2 nr = vec2(-e.y, e.x) / L;
+                    if (dot(ctr - a, nr) < 0.0) nr = -nr;
+                    sd = min(sd, dot(tp - a, nr));
+                  }
+                  vec4 c = texelFetch(hexCol, ivec2(k % ${COL_W}, k / ${COL_W}), 0);
+                  float cov = clamp(sd / pw + 0.5, 0.0, 1.0);
+                  acc += vec4(c.rgb * c.a, c.a) * cov; cs += cov;
+                }
+                if (cs > 1.0) acc /= cs;
+                vec4 bitmapColor = acc.a > 1e-4 ? vec4(acc.rgb / acc.a, min(acc.a, 1.0)) : vec4(0.0);`);
               return s;
             }
+            updateState(params) {
+              super.updateState(params);
+              const {props, oldProps} = params, dev = this.context.device;
+              const mk = (format, width, height, data) => dev.createTexture({format, width, height, data, mipmaps: false, sampler: {minFilter: "nearest", magFilter: "nearest", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge"}});
+              const st_ = this.state;
+              if (props.pic !== oldProps.pic && props.pic) {
+                st_.idTex && st_.idTex.destroy(); st_.geoTex && st_.geoTex.destroy();
+                const q = props.pic;
+                st_.idTex = mk("rg8unorm", q.n, q.n, q.idx);
+                st_.geoTex = mk("rgba32float", 5 * GEO_W, q.gh, q.geo);
+              }
+              if (props.col !== oldProps.col && props.col) {
+                st_.colTex && st_.colTex.destroy();
+                st_.colTex = mk("rgba8unorm", COL_W, props.col.length / (4 * COL_W), props.col);
+              }
+            }
+            finalizeState(ctx) {
+              super.finalizeState(ctx);
+              for (const k of ["idTex", "geoTex", "colTex"]) if (this.state[k]) this.state[k].destroy();
+            }
+            draw(opts) {
+              const {model, coordinateConversion, bounds, idTex, geoTex, colTex} = this.state;
+              if (!model || !idTex || !geoTex || !colTex || opts.shaderModuleProps.picking.isActive) return;
+              model.setBindings({hexGeom: geoTex, hexCol: colTex});
+              model.shaderInputs.setProps({bitmap: {bitmapTexture: idTex, bounds, coordinateConversion, desaturate: 0, tintColor: [1, 1, 1], transparentColor: [0, 0, 0, 0]}});
+              model.draw(this.context.renderPass);
+            }
           }
-          SmoothBitmapLayer.layerName = "SmoothBitmapLayer";
+          HexEdgeLayer.layerName = "HexEdgeLayer";
           const ptimes = [];  // per hexagon tile painted, for the tests
-          function paintTile(d) {
-            if (d.seq !== hmeta.seq || !hcol32) return d.canvas || null;
-            if (d.canvas && d.cseq === hexSeq) return d.canvas;
-            const tp = performance.now(), n = d.side, img = new ImageData(n, n), px = new Uint32Array(img.data.buffer), ids = d.ids;
-            for (let i = 0; i < ids.length; i++) { const k = ids[i]; if (k) px[i] = hcol32[k - 1]; }
-            const c = document.createElement("canvas");
-            c.width = n; c.height = n;
-            c.getContext("2d").putImageData(img, 0, 0);
-            d.canvas = c; d.cseq = hexSeq;
+          // once per tile and frame: the tile's hexagons as local indices (1 +,
+          // 0 none) and their rings in tile pixels; the colors per repaint
+          function tilePic(d) {
+            if (d.seq !== hmeta.seq || !hcol32) return d.col ? d : null;  // an older frame's tile keeps its last picture
+            if (d.col && d.cseq === hexSeq) return d;
+            const tp = performance.now();
+            if (!d.pic) {
+              const n = d.side, ids = d.ids, loc = new Map(), rows = [], idx = new Uint8Array(2 * n * n);
+              let last = 0, lastL = 0;
+              for (let i = 0; i < ids.length; i++) {
+                const k = ids[i];
+                if (!k) continue;
+                if (k !== last) { const l = loc.get(k); if (l === undefined) { lastL = rows.length; loc.set(k, lastL); rows.push(k - 1); } else lastL = l; last = k; }
+                const v = Math.min(lastL + 1, 65535);
+                idx[2 * i] = v & 255; idx[2 * i + 1] = v >> 8;
+              }
+              const K = rows.length, gh = Math.max(1, Math.ceil(K / GEO_W)), geo = new Float32Array(5 * GEO_W * gh * 4);
+              const Z = 2 ** d.z, lonC = (d.x + 0.5) / Z * 360 - 180;
+              for (let j = 0; j < K; j++) {
+                const r = ring(hexes[rows[j]]);
+                if (!r) continue;
+                const m = Math.min(10, r.length - 1), o = (Math.floor(j / GEO_W) * 5 * GEO_W + 5 * (j % GEO_W)) * 4;
+                for (let q = 0; q < 10; q++) {
+                  let [lng, lat] = r[Math.min(q, m - 1)];
+                  if (lng - lonC > 180) lng -= 360; else if (lng - lonC < -180) lng += 360;
+                  const sn = Math.sin(lat * Math.PI / 180);
+                  geo[o + 2 * q] = ((lng + 180) / 360 * Z - d.x) * n;
+                  geo[o + 2 * q + 1] = ((0.5 - Math.log((1 + sn) / (1 - sn)) / (4 * Math.PI)) * Z - d.y) * n;
+                }
+              }
+              d.pic = {n, idx, geo, gh, rows};
+            }
+            const rows = d.pic.rows, col = new Uint8Array(COL_W * Math.max(1, Math.ceil(rows.length / COL_W)) * 4), c32 = new Uint32Array(col.buffer);
+            for (let j = 0; j < rows.length; j++) c32[j] = hcol32[rows[j]];
+            d.col = col; d.cseq = hexSeq;
             ptimes.push({t: Date.now(), ms: performance.now() - tp, unz: d.unz, ready: d.done}); if (ptimes.length > 4000) ptimes.splice(0, 1000);
-            return c;
+            return d;
           }
           const hexLayer = (visible) => new TileLayer({
             id: "hexes", visible,
@@ -1981,16 +2065,16 @@ def _(anywidget, asyncio, time, traitlets):
               const seq = hmeta.seq, u8 = await ask("hex", seq, index, signal);
               if (!u8) return null;
               const t0 = performance.now(), ids = await unz(u8);
-              return {ids, seq, side: Math.round(Math.sqrt(ids.length)), unz: performance.now() - t0, done: Date.now()};
+              return {ids, seq, side: Math.round(Math.sqrt(ids.length)), z: index.z, x: index.x, y: index.y, unz: performance.now() - t0, done: Date.now()};
             },
             onTileError: (e) => { if (!e || (e.name !== "AbortError" && !/stale/.test(e.message || ""))) say("hexagon tile: " + ((e && e.message) || e)); },
             tileSize: 256, minZoom: Math.floor(HEXZ), maxZoom: 17, refinementStrategy: "best-available", debounceTime: 60, beforeId: slot(),
             updateTriggers: {getTileData: [hmeta.seq], renderSubLayers: [hexSeq, hmeta.seq]},
             renderSubLayers: (p) => {
-              const im = p.data ? paintTile(p.data) : null;
-              if (!im) return null;
+              const t = p.data ? tilePic(p.data) : null;
+              if (!t) return null;
               const {west, south, east, north} = p.tile.bbox;
-              return new SmoothBitmapLayer(p, {data: null, image: im, bounds: [west, south, east, north], textureParameters: {minFilter: "nearest", magFilter: "nearest"}});
+              return new HexEdgeLayer(p, {data: null, image: null, pic: t.pic, col: t.col, bounds: [west, south, east, north]});
             },
           });
           const ring = (h) => { try { return cellToBoundary(h, true); } catch (e) { return null; } };
