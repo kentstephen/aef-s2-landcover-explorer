@@ -2279,21 +2279,34 @@ def _(mo):
     DataFusion (via xarray-sql), and the pixels are averaged per cell,
     one fold per year. The hexagon size follows the zoom.
 
-    **The brightest patch, not the average.** The fold runs one H3 level
-    finer than the hexagons on screen, about one pixel of the read per finer
-    cell, and the change is worked out per finer cell. Each hexagon then
-    shows its most-changed finer cell: its change, its year, its steps. So
-    one changed site inside a big hexagon keeps it bright zoomed out,
-    instead of being averaged away by the quiet ground around it.
+    **The brightest patch, not the average.** The earlier notebooks (and
+    this one at first) averaged every pixel in a hexagon into one vector a
+    year and measured the change of that average. A small site that changed
+    a lot, inside a hexagon of quiet ground, was averaged away: it read dark
+    zoomed out and only lit up zoomed in. Here it runs in three steps:
+
+    1. The fold runs one H3 level finer than the hexagons on screen (res 9
+       cells under res 8 hexagons at zoom 9), about one pixel of the read
+       per finer cell. Averaging only happens inside a finer cell.
+    2. The change is worked out per finer cell, from that cell's own
+       vectors across the years.
+    3. h3ronpy's `change_resolution` gives each finer cell its parent
+       hexagon, and each hexagon takes its most-changed finer cell whole:
+       its change, its year, its steps.
+
+    So a hexagon shows its strongest spot, not its average, and one changed
+    site keeps a big hexagon bright zoomed out. `finer_cells` in the table
+    under the map is how many finer cells each hexagon picked from.
 
     **Drawn as tiles.** The hexagons reach the browser as map tiles in
     which every pixel names the hexagon it falls in, colored in the
     browser; hover and click look the hexagon up from the pointer with
     h3-js. The browser draws images, however many hexagons there are.
 
-    **AEF Change (viridis, `S`).** Each hexagon's yearly vector is
+    **AEF Change (viridis, `S`).** Each finer cell's yearly vector is
     normalized, and `disp` is 1 minus the cosine between the window's first
-    and last year: 0 means the fingerprint did not move. The fill stretches
+    and last year: 0 means the fingerprint did not move. A hexagon's `disp`
+    is its most-changed finer cell's. The fill stretches
     `disp` to this view's 2nd to 98th percentile, so the colors rank the
     hexagons against their neighbors, not against the world. Hexagons
     that barely moved are drawn faint.

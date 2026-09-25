@@ -35,6 +35,22 @@ year-to-year steps, its land cover and the Overture divisions it sits in
 for the cell's H3 string and lat, long, each copyable. The full key list is
 at the top of the notebook.
 
+### How change is aggregated
+
+AlphaEarth pixels are folded to H3 in DataFusion (xarray-sql, with an
+h3ronpy UDF) and averaged per cell, one fold per year. Change is 1 minus
+the cosine between a cell's normalized vectors for two years.
+
+The earlier notebooks averaged every pixel in a hexagon and measured the
+change of that average, so a small site that changed a lot inside a
+hexagon of quiet ground was averaged away when zoomed out. This notebook
+folds one H3 level finer than the hexagons drawn (about one pixel of the
+read per finer cell), works out the change per finer cell, then uses
+h3ronpy's `change_resolution` to group the finer cells under their hexagon.
+Each hexagon takes its most-changed finer cell whole: its change, its year
+of biggest change and its year-to-year steps. A hexagon shows its strongest
+spot, not its average.
+
 [Open it in molab](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py): it runs in the same region as the data, where
 the AlphaEarth reads are several times faster. Locally (dependencies are
 declared inline, PEP 723):
