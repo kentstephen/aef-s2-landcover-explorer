@@ -44,8 +44,10 @@ datasets to show me what's actually happening."
   steps, and its land cover from ESA WorldCover 2021).
 
 The readers (AlphaEarth COGs and mosaic, the S2 tiles) and the atlas's face
-are carried over from the atlas notebook in s2-wsf-aef-overture-pair. WSF
-and Overture buildings are out for now.
+are carried over from s2-wsf-aef-overture-atlas.py, in this repo's history:
+https://github.com/kentstephen/aef-s2-landcover-explorer/blob/2f4978aa960960705eb4edee3c71c55d37c80aa3/s2-wsf-aef-overture-atlas.py
+(the pair and slider notebooks: https://github.com/kentstephen/s2-wsf-aef-overture-pair).
+WSF and Overture buildings are out for now.
 
 Run: uv run marimo run aef-s2-landcover-explorer.py --sandbox (it fills the window;
 X or Esc gives the notebook back)

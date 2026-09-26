@@ -7,9 +7,12 @@ changed, read against ESA WorldCover 2021 for what is on the ground, with
 the Earth Genome Sentinel-2 yearly mosaics as the imagery for checking the
 change.
 
-This repo steps back from the earlier Overture buildings work
-([s2-wsf-aef-overture-pair](https://github.com/kentstephen/s2-wsf-aef-overture-pair))
-and narrows the sources to these.
+This repo steps back from the earlier Overture buildings work and narrows
+the sources to these. The earlier notebooks:
+[s2-wsf-aef-overture-pair](https://github.com/kentstephen/s2-wsf-aef-overture-pair)
+holds the pair and slider notebooks; the atlas notebook, where this one's
+readers and face come from, is in this repo's history
+([s2-wsf-aef-overture-atlas.py](https://github.com/kentstephen/aef-s2-landcover-explorer/blob/2f4978aa960960705eb4edee3c71c55d37c80aa3/s2-wsf-aef-overture-atlas.py)).
 
 ## Datasets
 
