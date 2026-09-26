@@ -43,12 +43,6 @@ datasets to show me what's actually happening."
   changed in each year, and the clicked hexagon's account (its year-to-year
   steps, and its land cover from ESA WorldCover 2021).
 
-The readers (AlphaEarth COGs and mosaic, the S2 tiles) and the atlas's face
-are carried over from s2-wsf-aef-overture-atlas.py, in this repo's history:
-https://github.com/kentstephen/aef-s2-landcover-explorer/blob/2f4978aa960960705eb4edee3c71c55d37c80aa3/s2-wsf-aef-overture-atlas.py
-(the pair and slider notebooks: https://github.com/kentstephen/s2-wsf-aef-overture-pair).
-WSF and Overture buildings are out for now.
-
 Run: uv run marimo run aef-s2-landcover-explorer.py --sandbox (it fills the window;
 X or Esc gives the notebook back)
 molab: https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py
@@ -211,7 +205,7 @@ def _(os, tempfile):
     S2_YEAR0 = 2022
     S2_SCALE0 = 1.0
 
-    # the zoom -> H3 ladder, the settlement pair's: res 8 at zoom 9, 9 at
+    # the zoom -> H3 ladder: res 8 at zoom 9, 9 at
     # 10.4, 10 at 11.8, 11 at 13.2, 12 from 14.6
     ZOOM0, PER_RES, BASE_RES = 6.2, 1.4, 6
     MIN_RES, MAX_RES = 5, 12
@@ -270,7 +264,7 @@ def _(os, tempfile):
     # the browser (locality, county, region); then the whole ladder, locality
     # up to country with each country's own word for the level (local_type),
     # from Overture's divisions GeoParquet as Fused partitions it on Source
-    # Cooperative (the pair notebook's lookup: 7 s cold, 1 to 3 s after)
+    # Cooperative (7 s cold, 1 to 3 s after)
     OV_DIV_PM = "https://overturemaps-extras-us-west-2.s3.us-west-2.amazonaws.com/tiles/2026-08-19.0/divisions.pmtiles"
     ADMIN_PQ = "s3://us-west-2.opendata.source.coop/fused/overture/2026-05-20-0/theme=divisions"
 
@@ -283,7 +277,7 @@ def _(os, tempfile):
     HEX_ZOOM = 9.0
     LABELS_SLOT = "watername_ocean"
     RASTER_TILE = 256
-    HOME = {"longitude": 114.29, "latitude": 30.58, "zoom": 7.2}  # Wuhan, the pair notebook's start
+    HOME = {"longitude": 114.29, "latitude": 30.58, "zoom": 7.2}  # Wuhan
 
     # how long a still press takes to become a hold, and how far the pointer
     # may drift before it counts as a pan instead
@@ -911,8 +905,6 @@ def _(duckdb):
 @app.cell
 def _(ADMIN_PQ, HOME, duckdb):
     # ---- the place under a click: one point query against fused/overture ------
-    # (the pair notebook's, as it was: Stephen, 2026-09-25, "it works well in
-    # the pair notebook")
     # Overture's divisions theme as Fused geo-partitions it on Source
     # Cooperative, 79 GeoParquet files per type, each row with a bbox struct.
     # division_area says which polygons hold the point: country, region,
@@ -2092,7 +2084,7 @@ def _(anywidget, asyncio, time, traitlets):
             if (st.holding || z >= 9) for (const y of S2Y) out.push(s2Layer(y));  // preloaded from zoom 9 only: below it the tiles are decimated from L5 (slow)
             // while holding: the imagery, and over it only the two outlines
             // (Stephen, 2026-09-25: the selected hexagon "should appear on the
-            // satellite", white on hover and gold when picked, as in the pair)
+            // satellite", white on hover and gold when picked)
             // kept in the stack while hidden (holding, zoomed out) so its tiles stay cached
             if (hmeta.seq) out.push(hexLayer(!st.holding && !!hcol && z >= HEXZ));
             const hv = hover != null && hover >= 0 ? outline("hover", hexes[hover], [255, 255, 255, 235], 2) : null;
@@ -2393,11 +2385,11 @@ def _(mo):
     DataFusion (via xarray-sql), and the pixels are averaged per cell,
     one fold per year. The hexagon size follows the zoom.
 
-    **The brightest patch, not the average.** The earlier notebooks (and
-    this one at first) averaged every pixel in a hexagon into one vector a
-    year and measured the change of that average. A small site that changed
-    a lot, inside a hexagon of quiet ground, was averaged away: it read dark
-    zoomed out and only lit up zoomed in. Here it runs in three steps:
+    **The brightest patch, not the average.** Averaging every pixel in a
+    hexagon into one vector a year and measuring the change of that
+    average loses small change: a small site that changed a lot, inside a
+    hexagon of quiet ground, is averaged away, dark zoomed out and only lit
+    up zoomed in. Here it runs in three steps:
 
     1. The fold runs one H3 level finer than the hexagons on screen (res 9
        cells under res 8 hexagons at zoom 9), about one pixel of the read
