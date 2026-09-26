@@ -25,3 +25,6 @@ layouts/
 .DS_Store
 .vscode/
 .idea/
+
+# Earlier notebooks, version controlled in their own repo
+s2-wsf-aef-overture-*.py

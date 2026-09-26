@@ -34,15 +34,18 @@ datasets to show me what's actually happening."
   Sentinel-2 yearly mosaic (Earth Genome, 2022 to 2025) fills the view,
   opening on 2022 the first time and after that where you left off. Scroll
   while holding to step through the years; with space held the map can be
-  dragged. Let go and the hexagons come back. Over the imagery only two
-  outlines: white under the pointer, gold on the picked cell.
+  dragged. Let go and the hexagons come back. Over the imagery only the
+  outlines: white under the pointer, gold on the picked cell, blue on a
+  searched H3 string.
+- Below zoom 9 the map is ESA WorldCover 2021 land cover; the hexagons
+  take over from zoom 9.
 - The card at the top right: the imagery year, how many hexagons in view
   changed in each year, and the clicked hexagon's account (its year-to-year
   steps, and its land cover from ESA WorldCover 2021).
 
 The readers (AlphaEarth COGs and mosaic, the S2 tiles) and the atlas's face
-are carried over from s2-wsf-aef-overture-atlas.py. WSF and Overture
-buildings are out for now.
+are carried over from the atlas notebook in s2-wsf-aef-overture-pair. WSF
+and Overture buildings are out for now.
 
 Run: uv run marimo run aef-s2-landcover-explorer.py --sandbox (it fills the window;
 X or Esc gives the notebook back)
@@ -161,7 +164,8 @@ def _(mo):
     again. **Click** a hexagon for its account and its land cover (gold
     outline); click it again to clear it. **Click on the imagery** (space
     held) to pick the cell there: the card adds its H3 string and lat, long,
-    each with a copy button.
+    each with a copy button. Below zoom 9 the map is ESA WorldCover 2021
+    land cover; the hexagons start at zoom 9.
 
     | Key | Does |
     | --- | --- |
@@ -174,7 +178,7 @@ def _(mo):
     | `-` `=` | the first year read, earlier, later |
     | `_` `+` | the last year read, earlier, later |
     | `L` | place names on the map, off and on |
-    | `/` | search a place |
+    | `/` | search a place, or paste an H3 string (flies there, outlined in blue) |
     | `X` | fill the window, and back |
     | `Esc` | close the about box, the menu, the card, then fill the window |
 
@@ -2407,9 +2411,13 @@ def _(mo):
     under the map is how many finer cells each hexagon picked from.
 
     **Drawn as tiles.** The hexagons reach the browser as map tiles in
-    which every pixel names the hexagon it falls in, colored in the
-    browser; hover and click look the hexagon up from the pointer with
-    h3-js. The browser draws images, however many hexagons there are.
+    which each pixel names the hexagons near it. The shader draws each
+    hexagon's edge from its H3 boundary (h3-js), covering a fragment by its
+    distance to the edge over one screen pixel, so edges stay smooth at any
+    zoom. Colors come from a small table, so switching between AEF Change
+    and AEF Change Year recolors without new tiles. Hover and click look
+    the hexagon up from the pointer with h3-js. The browser draws images,
+    however many hexagons there are.
 
     **AEF Change (viridis, `S`).** Each finer cell's yearly vector is
     normalized, and `disp` is 1 minus the cosine between the window's first
@@ -2438,10 +2446,11 @@ def _(mo):
     vegetation in greens, water blue. It shows where the towns, farmland and
     water are; from zoom 9 the AlphaEarth change hexagons take over.
 
-    **What happened (Sentinel-2).** Holding the map swaps the hexagons for
+    **What happened (Sentinel-2).** Holding space swaps the hexagons for
     Earth Genome's yearly true-color mosaic, 2022 to 2025, so the change
     the hexagons point to can be checked against the imagery. Nothing
-    colored is drawn over it.
+    colored is drawn over it, only the outlines of the hovered, picked and
+    searched hexagons.
     """)
     return
 
