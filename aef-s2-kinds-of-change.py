@@ -2181,7 +2181,7 @@ def _(anywidget, asyncio, time, traitlets):
                 self.send({"kind": "tile", "id": c["id"], "kt": kt}, buffers=[png])
 
         _css = r"""
-        .at{--glass:rgba(255,255,255,.9);--glass-hi:#fff;--line:rgba(24,32,40,.13);--text:#1b2127;--muted:#5d6873;--faint:rgba(24,32,40,.18);--cool:#0072b2;--sel:rgba(24,32,40,.08);
+        .at{--glass:rgba(255,255,255,.9);--card:rgba(255,255,255,.72);--glass-hi:#fff;--line:rgba(24,32,40,.13);--text:#1b2127;--muted:#5d6873;--faint:rgba(24,32,40,.18);--cool:#0072b2;--sel:rgba(24,32,40,.08);
           position:relative;width:100%;background:#eef0f1;color:var(--text);font:14px/1.45 "Instrument Sans",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;overflow:hidden;border-radius:10px;-webkit-font-smoothing:antialiased}
         .at.fit{position:fixed;inset:0;z-index:9999;border-radius:0}
         .at *{box-sizing:border-box}
@@ -2190,6 +2190,8 @@ def _(anywidget, asyncio, time, traitlets):
         .at-map.holding{cursor:ns-resize}
         .at-map.holding.key{cursor:grab}
         .at-glass{background:var(--glass);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 22px rgba(20,30,40,.14)}
+        /* the cards a little see-through; the stronger blur keeps the text clear (Stephen, 2026-09-27) */
+        .at-panel.at-glass,.at-yc.at-glass{background:var(--card);backdrop-filter:blur(18px) saturate(1.15);-webkit-backdrop-filter:blur(18px) saturate(1.15)}
         .at button{font:inherit;color:inherit}
         .at button:focus-visible,.at input:focus-visible{outline:2px solid var(--cool);outline-offset:2px}
         .at-top{position:absolute;left:12px;top:12px;z-index:6;display:flex;flex-direction:column;gap:8px;align-items:flex-start;max-width:calc(100% - 360px)}

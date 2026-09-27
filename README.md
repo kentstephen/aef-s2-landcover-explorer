@@ -3,7 +3,7 @@
 AlphaEarth Foundations embeddings folded to H3 to show where the ground
 changed, read against ESA WorldCover 2021 for what is on the ground, with
 the Earth Genome Sentinel-2 yearly mosaics as the imagery for checking the
-change. Two notebooks:
+change. Three notebooks:
 
 - `aef-s2-landcover-explorer.py`: where the ground changed, and when.
   [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py)
@@ -11,6 +11,10 @@ change. Two notebooks:
   view from the World Settlement Footprint and found in AlphaEarth,
   including places WSF did not record.
   [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-new-construction.py)
+- `aef-s2-kinds-of-change.py`: the ground that moved most, grouped by the
+  way it moved, from AlphaEarth alone, with its land cover read from
+  AlphaEarth every year.
+  [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-kinds-of-change.py)
 
 ## Datasets
 
@@ -18,6 +22,8 @@ change. Two notebooks:
 | --- | --- | --- | --- |
 | AlphaEarth Foundations Satellite Embedding, annual, 2017 to 2025 | Google and Google DeepMind ([dataset page](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)) | [tge-labs/aef](https://source.coop/tge-labs/aef), [tge-labs/aef-mosaic](https://source.coop/tge-labs/aef-mosaic) | CC BY 4.0 |
 | World Settlement Footprint (WSF) Tracker, 10 m, mid-2016 to the end of 2025 (new construction notebook) | DLR and MindEarth | [mindearth/wsf](https://source.coop/mindearth/wsf) ([DOI 10.5281/zenodo.20424537](https://doi.org/10.5281/zenodo.20424537)) | CC BY 3.0 IGO |
+| Impact Observatory, Microsoft and Esri 10 m annual land use and land cover v02, 2017 to 2023 (kinds of change notebook) | Impact Observatory, Microsoft and Esri | Microsoft Planetary Computer, collection `io-lulc-annual-v02` | CC BY 4.0 |
+| Overture Maps transportation and land use (GeoParquet release 2026-05-20.0, kinds of change notebook) | Overture Maps Foundation, from OpenStreetMap | [fused/overture](https://source.coop/fused/overture) on Source Cooperative | ODbL |
 | ESA WorldCover 10 m 2021 v200 | ESA WorldCover consortium, from Copernicus Sentinel data | `s3://esa-worldcover/v200/2021/map` (AWS open data) | CC BY 4.0 |
 | Overture Maps divisions (place names: PMTiles release 2026-08-19.0, and GeoParquet release 2026-05-20.0 via [fused/overture](https://source.coop/fused/overture)) | Overture Maps Foundation, from OpenStreetMap, geoBoundaries, Esri Community Maps contributors and LINZ | Overture's release bucket, Source Cooperative | ODbL (the geoBoundaries, Esri and LINZ parts CC BY 4.0); see [Overture attribution](https://docs.overturemaps.org/attribution/) |
 | Photon place search, over OpenStreetMap | komoot | [photon.komoot.io](https://photon.komoot.io/) | ODbL (OpenStreetMap data) |
@@ -82,15 +88,6 @@ uv run marimo run aef-s2-landcover-explorer.py --sandbox
 
 ## The new construction notebook
 
-**On the `aef-change-kinds` branch** WSF is switched off (`USE_WSF =
-False`) and `A` is **Kinds of change**, from AlphaEarth alone: the quarter
-of the view that moved most, less the change the whole view made, grouped
-by the direction it moved into six kinds (spherical k-means), in
-Okabe-Ito colors with quiet ground faint gray. The key gives each kind's
-hexagons, most common year and the WorldCover class it has most more of
-than the view; click a kind to hide it. `S` is raw AEF Change. The WSF
-model described below is still in the code for later.
-
 `aef-s2-new-construction.py` is a copy of the change notebook that shows
 only new construction (`A`, the default; its raw AEF Change mode, `S`, is
 still there, and the change year moved to the card). The World Settlement Footprint tracker dates, every half year,
@@ -130,6 +127,30 @@ hexagons, in the card.
 uv run marimo run aef-s2-new-construction.py --sandbox
 ```
 
+## The kinds of change notebook
+
+`aef-s2-kinds-of-change.py` is a copy of the new construction notebook
+with WSF switched off (`USE_WSF = False`; the WSF model is still in the
+code for later). `A` is **Kinds of change**, from AlphaEarth alone: the
+quarter of the view that moved most, less the change the whole view made,
+grouped by the direction it moved into six kinds (spherical k-means), in
+Okabe-Ito colors with quiet ground faint gray. The key gives each kind's
+hexagons, most common year and the land cover it has more of than the
+view; click a kind to hide it. `S` is raw AEF Change.
+
+The land cover is read from AlphaEarth every year: a logistic regression
+per year on the 64 numbers, taught per finer cell by Impact Observatory's
+annual land cover (its own year on all ground, 2017 to 2023; 2024 and 2025
+only on ground that barely moved) and by Overture roads, rail and land use
+(the last year on all ground, earlier years only where the ground barely
+moved). ESA WorldCover 2021 stands in until those are read.
+
+[Open it in molab](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-kinds-of-change.py), or locally:
+
+```
+uv run marimo run aef-s2-kinds-of-change.py --sandbox
+```
+
 ## Run
 
 Dependencies are declared inline (PEP 723):
@@ -137,6 +158,7 @@ Dependencies are declared inline (PEP 723):
 ```
 uv run marimo edit aef-s2-landcover-explorer.py --sandbox
 uv run marimo edit aef-s2-new-construction.py --sandbox
+uv run marimo edit aef-s2-kinds-of-change.py --sandbox
 ```
 
 ## Attribution
@@ -146,7 +168,9 @@ DeepMind (CC BY 4.0). WSF Tracker (c) DLR and MindEarth, via Source
 Cooperative (mindearth/wsf, DOI 10.5281/zenodo.20424537), CC BY 3.0 IGO.
 ESA WorldCover 10 m 2021 v200 (c) ESA WorldCover project,
 contains modified Copernicus Sentinel data (2021) processed by the ESA
-WorldCover consortium (CC BY 4.0). Overture Maps divisions: (c) OpenStreetMap
+WorldCover consortium (CC BY 4.0). Impact Observatory, Microsoft and
+Esri 10 m annual land use and land cover v02, via Microsoft Planetary
+Computer (CC BY 4.0). Overture Maps transportation, land use and divisions: (c) OpenStreetMap
 contributors, Overture Maps Foundation (ODbL), with geoBoundaries, Esri
 Community Maps contributors and Land Information New Zealand (LINZ)
 (CC BY 4.0).
