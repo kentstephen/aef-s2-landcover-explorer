@@ -2372,7 +2372,7 @@ def _(anywidget, asyncio, time, traitlets):
         .at-panel.at-glass,.at-yc.at-glass{background:var(--card);backdrop-filter:blur(18px) saturate(1.15);-webkit-backdrop-filter:blur(18px) saturate(1.15)}
         .at button{font:inherit;color:inherit}
         .at button:focus-visible,.at input:focus-visible{outline:2px solid var(--cool);outline-offset:2px}
-        .at-top{position:absolute;left:12px;top:12px;z-index:6;display:flex;flex-direction:column;gap:8px;align-items:flex-start;max-width:calc(100% - 360px)}
+        .at-top{position:absolute;left:12px;top:12px;z-index:6;display:flex;flex-direction:column;gap:8px;align-items:flex-start;max-width:calc(100% - 420px)}
         .at-search{position:relative;z-index:2;display:flex;align-items:center;gap:8px;padding:0 12px;height:40px;width:270px}
         .at-search svg{flex:0 0 auto;opacity:.6}
         .at-search input{flex:1;min-width:0;background:none;border:0;color:var(--text);font:inherit;outline:none}
@@ -2384,10 +2384,11 @@ def _(anywidget, asyncio, time, traitlets):
         .at-panel{display:flex;flex-direction:column;gap:8px;padding:9px 11px;width:360px;max-width:calc(100vw - 32px);box-sizing:border-box}
         .at-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
         .at-lab{font-size:12.5px;color:var(--muted);min-width:64px}
-        .seg-s{display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:9px;width:max-content}
-        .seg-s button{border:0;background:none;color:var(--muted);padding:3px 10px;border-radius:7px;cursor:pointer}
-        .seg-s button:hover{color:var(--text)}
-        .seg-s button.on{background:var(--text);color:#fff}
+        .seg-s,.seg-f{display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:9px;width:max-content}
+        .seg-s button,.seg-f button{border:0;background:none;color:var(--muted);padding:3px 10px;border-radius:7px;cursor:pointer}
+        .seg-s button:hover,.seg-f button:hover{color:var(--text)}
+        .seg-s button.on,.seg-f button.on{background:var(--text);color:#fff}
+        .seg-f{margin-bottom:6px;font-size:12.5px}
         .seg-s.col{flex-direction:column;align-items:stretch}
         .at-kinds{display:flex;flex-direction:column;gap:2px;width:100%}
         .at-kinds button{display:flex;align-items:center;gap:7px;border:0;background:none;padding:2px 4px;border-radius:6px;cursor:pointer;text-align:left;color:var(--text);font-size:12.5px}
@@ -2449,7 +2450,7 @@ def _(anywidget, asyncio, time, traitlets):
         @keyframes at-run{0%{left:-28%}100%{left:100%}}
         .at-msg{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;z-index:5;font-size:13px;color:var(--muted);padding:6px 11px;display:none;max-width:min(520px,calc(100% - 24px))}
         .at-msg.err{color:#8a4b00}
-        .at-yc{position:absolute;right:12px;top:60px;z-index:6;width:320px;max-width:calc(100% - 24px);padding:14px 16px 12px;transform-origin:top right}
+        .at-yc{position:absolute;right:12px;top:60px;z-index:6;width:380px;max-width:calc(100% - 24px);padding:14px 16px 12px;transform-origin:top right}
         .at-yc .yr{display:flex;align-items:flex-end;gap:12px}
         .at-yc .yr b{font-size:56px;line-height:.86;font-weight:600;letter-spacing:-.035em;font-stretch:88%}
         .at-yc .yr span{font-size:12.5px;color:var(--muted);line-height:1.35;padding-bottom:2px}
@@ -2534,7 +2535,7 @@ def _(anywidget, asyncio, time, traitlets):
         // how much a hexagon moved, in words, from its 0..1 level in this view
         const howMuch = (t) => t >= 0.75 ? "a lot" : t >= 0.4 ? "a fair amount" : t >= 0.15 ? "a little" : "barely";
         const FAIR = 1 + Math.round(254 * 0.4);  // the level byte at "a fair amount"
-        const HB = 12;  // bytes per hexagon in hattrs
+        const HB = 13;  // bytes per hexagon in hattrs
         // kinds of change, largest first: Okabe-Ito, made to stay apart for
         // red-weak and other color vision; quiet ground (0) faint gray
         const KIND_RGB = [[230, 159, 0], [86, 180, 233], [0, 158, 115], [240, 228, 66], [0, 114, 178], [204, 121, 167]];
@@ -2584,10 +2585,10 @@ def _(anywidget, asyncio, time, traitlets):
           const ORA = ["fdd0a2", "fdae6b", "fd8d3c", "f16913", "d94801", "a63603"].map((h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)));
           const ora = (t) => { t = Math.max(0, Math.min(1, t)) * (ORA.length - 1); const i = Math.min(ORA.length - 2, Math.floor(t)), f = t - i; return ORA[i].map((v, j) => Math.round(v + (ORA[i + 1][j] - v) * f)); };
           const oraCss = (n) => Array.from({length: n}, (_, i) => `rgb(${ora(i / (n - 1)).join(",")})`).join(",");
-          const A_FILL = cfg.alpha_fill || 235, A_QUIET = cfg.alpha_quiet || 70;
+          const A_FILL = cfg.alpha_fill || 235, A_QUIET = cfg.alpha_quiet || 70, A_DIM = 45;
           const HEXZ = cfg.hex_zoom || 9, HOLD_MS = cfg.hold_ms || 200, SLOP = cfg.hold_slop || 5;
           const st = {
-            gmode: cfg.use_wsf ? "new" : "much", want: cfg.use_wsf ? "new" : "much", hideKinds: new Set(), y0: cfg.aef_from || 2022, y1: cfg.aef_to || 2025,
+            gmode: cfg.use_wsf ? "new" : "much", want: cfg.use_wsf ? "new" : "much", hideKinds: new Set(), focus: "dim", y0: cfg.aef_from || 2022, y1: cfg.aef_to || 2025,
             imgYear: cfg.s2_year || S2Y[S2Y.length - 1], labels: true, s2scale: Number(cfg.s2_scale) || 1,
             fit: !!cfg.fit, holding: false,
           };
@@ -2713,13 +2714,15 @@ def _(anywidget, asyncio, time, traitlets):
             const m_ = hmeta.model;
             if (st.gmode === "kinds") {
               const ks = hmeta.kinds || [];
-              let h = `<div class="at-kinds">`;
+              const FOC = [["all", "All", "every hexagon in full"], ["dim", "Dim unchanged", "fainter where AlphaEarth reads the same land cover every year"], ["built", "Built", "full only where the land cover changed and was built-up, road or construction in some year"]];
+              let h = `<div class="seg-f">` + FOC.map(([k, t, tip]) => `<button data-focus="${k}" class="${st.focus === k ? "on" : ""}" title="${tip}">${t}</button>`).join("") + `</div><div class="at-kinds">`;
               ks.forEach((q, j) => {
                 const k = j + 1, off = st.hideKinds.has(k);
                 h += `<button data-kind="${k}" class="${off ? "off" : ""}" title="${off ? "show" : "hide"} kind ${k}"><i style="background:${kindCss(k)}"></i><b>${k}</b><span>${fmt(q.n)}${q.year ? `, most ${q.year}` : ""}${q.from ? `, ${lcPair(q.from, q.to)}` : ""}</span></button>`;
               });
               h += `</div><span class="why">The ground that moved most from ${y0} to ${y1}, grouped by the way it moved: one color, one way of changing. Beside each: hexagons, the most common year, and what AlphaEarth reads most of it as in ${y0} and in ${y1}, taught in this view by ${esc(hmeta.lc_source || "land cover maps")}. Click one to hide it.</span>`;
               keyEl.innerHTML = h;
+              keyEl.querySelectorAll("[data-focus]").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); st.focus = b.dataset.focus; recolorHex(); styleKey(); update(); }; });
               keyEl.querySelectorAll("[data-kind]").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const k = +b.dataset.kind; st.hideKinds.has(k) ? st.hideKinds.delete(k) : st.hideKinds.add(k); recolorHex(); renderYear(); styleKey(); update(); }; });
               return;
             }
@@ -2850,7 +2853,14 @@ def _(anywidget, asyncio, time, traitlets):
                 const kd = hattrs[a8 + 11], t = (lv - 1) / 254;
                 if (!kd) { col = [150, 156, 162]; a = 40; }
                 else if (st.hideKinds.has(kd)) continue;
-                else { col = KIND_RGB[(kd - 1) % KIND_RGB.length]; a = Math.round(110 + (A_FILL - 110) * t); }
+                else {
+                  col = KIND_RGB[(kd - 1) % KIND_RGB.length]; a = Math.round(110 + (A_FILL - 110) * t);
+                  // the key's focus: ground AlphaEarth reads as one class every
+                  // year (Dim unchanged), or all but built-up, road and
+                  // construction that changed (Built), made more see-through
+                  const lc = hattrs[a8 + 12];
+                  if ((st.focus === "dim" && lc === 1) || (st.focus === "built" && lc !== 3)) a = A_DIM;
+                }
               } else {
                 if (!lv) continue;
                 const t = (lv - 1) / 254;
@@ -2910,7 +2920,7 @@ def _(anywidget, asyncio, time, traitlets):
           function yearBars(c) {
             const ys = Object.keys(c.years).map(Number);
             if (!ys.length) return "";
-            const W = 286, H = 78, base = 60, gap = 6, bw = Math.min(56, (W - gap * (ys.length - 1)) / ys.length);
+            const W = 346, H = 78, base = 60, gap = 6, bw = Math.min(56, (W - gap * (ys.length - 1)) / ys.length);
             const x0 = (W - (bw * ys.length + gap * (ys.length - 1))) / 2;
             const max = Math.max(1, ...ys.map((y) => c.years[y]));
             let s = `<svg width="${W}" height="${H}" role="img" aria-label="hexagons in view that changed a fair amount or more, by the year of their biggest change">`;
@@ -2931,7 +2941,7 @@ def _(anywidget, asyncio, time, traitlets):
           // median step in view: the biggest in full ink, a dashed line at 1
           function stepBars(rel, steps, years, big) {
             if (!rel || !rel.length) return "";
-            const W = 286, H = 74, base = 56, gap = 6, n = rel.length, bw = Math.min(46, (W - gap * (n - 1)) / n);
+            const W = 346, H = 74, base = 56, gap = 6, n = rel.length, bw = Math.min(46, (W - gap * (n - 1)) / n);
             const x0 = (W - (bw * n + gap * (n - 1))) / 2;
             const vmax = Math.max(2, ...rel.filter((v) => v != null));
             const yOf = (v) => base - (base - 10) * Math.min(1, v / vmax);
@@ -3489,12 +3499,13 @@ def _(anywidget, asyncio, time, traitlets):
             map.on("error", (ev) => { if (ev && ev.error && ev.error.message && !/tile|404/i.test(ev.error.message)) say("map: " + ev.error.message); });
             new ResizeObserver(() => { try { map.resize(); } catch (e) {} fitCard(); }).observe(mapEl);
             window.__cmMaps = () => [map];
-            window.__cmState = () => ({st: Object.assign({}, st), hex: N, res, hmeta, tiles: tstat, card: cardData, status: model.get("status")});
+            window.__cmState = () => ({st: Object.assign({}, st), hex: N, res, hmeta, tiles: tstat, card: cardData, status: model.get("status"),
+              lc: hattrs ? Array.from({length: N}, (_, i) => hattrs[HB * i + 12]).reduce((c, v) => (c[v]++, c), [0, 0, 0, 0]) : null});
             window.__cmTiles = () => ({log: tlog, paints: ptimes, frames: flog});
             // for tests: the center of the first hexagon whose biggest step is year y and that moved a fair amount
             // for tests: the center of the best-scoring shown hexagon, with (wsf) or without WSF's new building
-            window.__cmNewAt = (wsf) => { const b = map.getBounds(), pmin = 1 + Math.round(254 * (hmeta.p_min ?? 0.5)); let best = -1, bi = -1; for (let i = 0; i < N; i++) { const o = HB * i, nb = hattrs[o + 4]; if (nb < pmin || !!hattrs[o + 6] !== !!wsf || nb <= best) continue; const c = cellToLatLng(hexes[i]); if (!b.contains([c[1], c[0]])) continue; const pt = map.project([c[1], c[0]]); if (pt.x < 420 || pt.x > mapEl.clientWidth - 360 || pt.y < 280) continue; best = nb; bi = i; } if (bi < 0) return null; const c = cellToLatLng(hexes[bi]); return [c[1], c[0]]; };
-            window.__cmHexAt = (y) => { const b = map.getBounds(); for (let i = 0; i < N; i++) if (hattrs && hattrs[HB * i] === y - 2000 && hattrs[HB * i + 1] >= FAIR) { const r = cellToBoundary(hexes[i], true); const c = r.slice(0, -1).reduce((a, p) => [a[0] + p[0] / (r.length - 1), a[1] + p[1] / (r.length - 1)], [0, 0]); if (b.contains(c) && map.project(c).x < mapEl.clientWidth - 360 && map.project(c).y > 200) return c; } return null; };
+            window.__cmNewAt = (wsf) => { const b = map.getBounds(), pmin = 1 + Math.round(254 * (hmeta.p_min ?? 0.5)); let best = -1, bi = -1; for (let i = 0; i < N; i++) { const o = HB * i, nb = hattrs[o + 4]; if (nb < pmin || !!hattrs[o + 6] !== !!wsf || nb <= best) continue; const c = cellToLatLng(hexes[i]); if (!b.contains([c[1], c[0]])) continue; const pt = map.project([c[1], c[0]]); if (pt.x < 420 || pt.x > mapEl.clientWidth - 420 || pt.y < 280) continue; best = nb; bi = i; } if (bi < 0) return null; const c = cellToLatLng(hexes[bi]); return [c[1], c[0]]; };
+            window.__cmHexAt = (y) => { const b = map.getBounds(); for (let i = 0; i < N; i++) if (hattrs && hattrs[HB * i] === y - 2000 && hattrs[HB * i + 1] >= FAIR) { const r = cellToBoundary(hexes[i], true); const c = r.slice(0, -1).reduce((a, p) => [a[0] + p[0] / (r.length - 1), a[1] + p[1] / (r.length - 1)], [0, 0]); if (b.contains(c) && map.project(c).x < mapEl.clientWidth - 420 && map.project(c).y > 200) return c; } return null; };
           }
 
           // ---- the kernel's data -----------------------------------------------------------------
@@ -3726,6 +3737,7 @@ def _(
     IO_YEARS,
     HOME,
     KINDS_MIN_RES,
+    LC_VOCAB,
     NEW_P_MIN,
     SETTLE,
     WC_CLASSES,
@@ -3868,9 +3880,20 @@ def _(
         nh, ch = fr["ncode"].astype(np.uint8), fr["ccode"].astype(np.uint8)
         # the biggest yearly step as a multiple of the usual, in tenths (0 none)
         sb = np.round(10 * np.clip(np.nan_to_num(fr["stand"]), 0, 25.5)).astype(np.uint8)
+        # what AlphaEarth reads it as over the years (lcy): 0 no reading, 1 the
+        # same class every year, 2 the class changed, 3 changed and built-up,
+        # road or construction in some year (the key's All / Dim unchanged /
+        # Built, Stephen 2026-09-27)
+        lcy = fr.get("lcy")
+        lc = np.zeros(len(big), np.uint8)
+        if lcy is not None and len(lcy) == len(big) and lcy.shape[1]:
+            ok = lcy >= 0
+            same = np.where(ok, lcy, 99).min(1) == np.where(ok, lcy, -1).max(1)
+            built = np.isin(lcy, [LC_VOCAB.index(c) for c in ("built-up", "road", "construction")]).any(1)
+            lc = np.where(~ok.any(1), 0, np.where(same, 1, np.where(built, 3, 2))).astype(np.uint8)
         with cmap.hold_sync():
             cmap.cells = fr["cellid"].astype("<u8").tobytes()
-            cmap.hattrs = np.ascontiguousarray(np.stack([yc, lb, tc, ts, nb, ny, wb, wy, nh, ch, sb, fr["kind"].astype(np.uint8)], 1)).tobytes()
+            cmap.hattrs = np.ascontiguousarray(np.stack([yc, lb, tc, ts, nb, ny, wb, wy, nh, ch, sb, fr["kind"].astype(np.uint8), lc], 1)).tobytes()
             cmap.hmeta = json.dumps({
                 "y0": int(fr["years"][0]), "y1": int(fr["years"][-1]), "km2": float(CELL_KM2.get(HOLD["res"], 0)),
                 "seq": int(fr.get("seq", 0)), "carry": CARRY_RES, "timing": fr.get("timing"),
@@ -3892,6 +3915,32 @@ def _(
         # the teachers' reads not tried yet for these years (a failed read counts as tried)
         return [y for y in years if y in IO_YEARS and (y, bkey) not in HOLD["io"]], bkey not in HOLD["ov"]
 
+    def _teach_start(bkey, box, fres, years):
+        """The teachers' reads for these years, started now unless already in
+        flight, each kept in HOLD when it lands. The hexagons never wait on
+        them (Stephen, 2026-09-27: "having the rest of it follow is better
+        than not having anything at all"); Kinds of change follows."""
+        fly = HOLD.setdefault("teach_fly", {})
+        ineed, oneed = _teach_need(bkey, years)
+
+        async def _one(k, coro):
+            r = await coro
+            if k[0] == "ov":
+                HOLD["ov"][bkey] = r
+            else:
+                HOLD["io"][(k[1], bkey)] = r
+            return r
+
+        futs = []
+        for k, mk in ([(("ov", bkey), lambda: ov_fold(box, fres))] if oneed else []) + [
+                (("io", y, bkey), (lambda y=y: io_fold(box, fres, y))) for y in ineed]:
+            f = fly.get(k)
+            if f is None or f.cancelled() or (f.done() and f.exception() is not None):
+                f = fly[k] = asyncio.ensure_future(_one(k, mk()))
+                f.add_done_callback(lambda f_, k=k: fly.pop(k, None) if fly.get(k) is f_ else None)
+            futs.append(f)
+        return futs
+
     def _later(fr0, key, box, res, rres, fres, stats, hist):
         """WHAT COMES WHEN READY (Stephen, 2026-09-27: "we get what we normally
         get zoomed in and the new info comes when ready so we dont have to
@@ -3907,12 +3956,10 @@ def _(
         seq = fr0.get("seq")
 
         async def _teachers():
-            ineed, oneed = _teach_need(bkey, list(range(y0, y1 + 1)) + (list(IO_YEARS) if hist else []))
-            got = await asyncio.gather(ov_fold(box, fres) if oneed else asyncio.sleep(0), *(io_fold(box, fres, y) for y in ineed))
-            if oneed:
-                HOLD["ov"][bkey] = got[0]
-            for y, r in zip(ineed, got[1:]):
-                HOLD["io"][(y, bkey)] = r
+            # the reads _serve_hex started with AlphaEarth, or new ones;
+            # shielded, so a new view cancels the wait but not the reads
+            # (the next view over this ground may share them)
+            await asyncio.gather(*map(asyncio.shield, _teach_start(bkey, box, fres, list(range(y0, y1 + 1)) + (list(IO_YEARS) if hist else []))))
             return "land cover teachers: " + " | ".join(
                 [(HOLD["ov"].get(bkey) or (None, ""))[1]] + [HOLD["io"][(y, bkey)][1] for y in IO_YEARS if (y, bkey) in HOLD["io"]])
 
@@ -4012,28 +4059,23 @@ def _(
             wneed = bkey not in HOLD["wc"]
             sneed = USE_WSF and bkey not in HOLD["wsf"]
             # the land cover teachers (Impact Observatory, Overture PMTiles)
-            # are cheap next to AlphaEarth: when AlphaEarth has to be read,
-            # they are read with it, so Kinds of change is ready with the
-            # hexagons (Stephen, 2026-09-27: "we can load them sooner").
-            # When AlphaEarth is already kept, the hexagons come at once and
-            # the teachers after the frame (_later)
-            ineed, oneed = _teach_need(bkey, years) if need and res >= KINDS_MIN_RES else ([], False)
+            # start with AlphaEarth (Stephen, 2026-09-27: "we can load them
+            # sooner") but the hexagons do not wait on them: inside one
+            # gather, Impact Observatory's reads took 13 to 19 s against 5 s
+            # alone and held the hexagons (Wuhan, zoom 12.2). Kinds of change
+            # follows when they land (_later)
+            if res >= KINDS_MIN_RES:
+                _teach_start(bkey, box, fres, years)
             got = await asyncio.gather(
                 wc_fold(box, res) if wneed else asyncio.sleep(0, result=HOLD["wc"].get(bkey)),
                 wsf_fold(box, fres) if sneed else asyncio.sleep(0, result=HOLD["wsf"].get(bkey, (None, "WSF off"))),
-                ov_fold(box, fres) if oneed else asyncio.sleep(0),
-                *(io_fold(box, fres, y) for y in ineed),
                 *(aef_fold(box, fres, y, read_res=rres) for y in need),
             )
             if wneed:
                 HOLD["wc"][bkey] = got[0]
             if sneed:
                 HOLD["wsf"][bkey] = got[1]
-            if oneed:
-                HOLD["ov"][bkey] = got[2]
-            for y, r in zip(ineed, got[3:3 + len(ineed)]):
-                HOLD["io"][(y, bkey)] = r
-            for y, r in zip(need, got[3 + len(ineed):]):
+            for y, r in zip(need, got[2:]):
                 HOLD["aef"][(y, bkey)] = r
             for k_ in ("aef", "wc", "wsf", "io", "ov"):
                 while len(HOLD[k_]) > 40:
