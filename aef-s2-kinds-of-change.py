@@ -19,14 +19,15 @@
 # ///
 
 
-"""Kinds of change (v3), from AlphaEarth.
+"""Kinds of change, from AlphaEarth.
 
-v3 of the AlphaEarth notebooks in this repo: v1 aef-s2-landcover-explorer.py,
-v2 aef-s2-new-construction.py (WSF as the teacher), v3 this one (Stephen,
-2026-09-27): WSF off, the ground that moved most grouped by the way it
-moved, and the land cover read from AlphaEarth every year, taught by Impact
-Observatory's annual maps and Overture roads and land use. What follows
-below is v2's account, from which this was copied.
+The third of the AlphaEarth notebooks in this repo, in order:
+aef-s2-landcover-explorer.py, then aef-s2-new-construction.py (WSF as the
+teacher), then this one (Stephen, 2026-09-27): WSF off, the ground that
+moved most grouped by the way it moved, and the land cover read from
+AlphaEarth every year, taught by Impact Observatory's annual maps and
+Overture roads and land use. What follows below is the new construction
+notebook's account, from which this was copied.
 
 New construction, from AlphaEarth, taught by the World Settlement Footprint.
 
@@ -179,7 +180,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md("""
-    # Kinds of change (v3)
+    # Kinds of change
 
     The hexagons are the places that look like new construction over the
     year window, colored by the year they changed. What counts as new
