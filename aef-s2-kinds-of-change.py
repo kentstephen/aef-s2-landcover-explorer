@@ -23,49 +23,32 @@
 
 The third of the AlphaEarth notebooks in this repo, in order:
 aef-s2-landcover-explorer.py, then aef-s2-new-construction.py (WSF as the
-teacher), then this one (Stephen, 2026-09-27): WSF off, the ground that
-moved most grouped by the way it moved, and the land cover read from
-AlphaEarth every year, taught by Impact Observatory's annual maps and
-Overture roads and land use. What follows below is the new construction
-notebook's account, from which this was copied.
+teacher), then this one, copied from new construction (Stephen,
+2026-09-27): WSF off, the ground that moved most grouped by the way it
+moved, and the land cover read from AlphaEarth every year.
 
-New construction, from AlphaEarth, taught by the World Settlement Footprint.
-
-Stephen, 2026-09-26: "we just stick to new construction for now", with WSF
-as the teacher: in every view, the places WSF says became built inside the
-year window are the examples, a small model learns what they look like in
-AlphaEarth (the first and last year's 64 numbers), and every hexagon gets a
-score. Only the hexagons that look like new construction are drawn, so the
-map says where to look, including places WSF missed. Nothing is saved to
-disk. The model is learned in a view with enough WSF examples and kept
-while zooming in under it (Stephen, 2026-09-26: "this needs to work at
-different zooms"); zooming out, moving off it or changing the years read
-teaches it again.
-
-A copy of aef-s2-landcover-explorer.py: its AEF Change mode (S) is still
-here; New construction (A) is the default. The explorer's AEF Change Year
-mode is gone, the change year lives on the card (Stephen, 2026-09-27).
-Also 2026-09-27: the model's unchanged examples lean on ground that
-changed without being built (hard negatives), and zoomed in the whole
-AlphaEarth history is read to say what each change did after (held, came
-back, changes most years, kept changing).
-
-- The map is the AlphaEarth hexagons in viridis: how much the ground's 64
-  numbers moved over the year window (or the year its change stood out).
-  They say where to look.
-- Hold space: the hexagons go and the
-  Sentinel-2 yearly mosaic (Earth Genome, 2022 to 2025) fills the view,
-  opening on 2022 the first time and after that where you left off. Scroll
-  while holding to step through the years; with space held the map can be
-  dragged. Let go and the hexagons come back. Over the imagery only the
-  outlines: white under the pointer, gold on the picked cell, blue on a
-  searched H3 string.
-- The hexagons start at zoom 9; below it the map is the plain basemap
-  (Stephen, 2026-09-26: not the WorldCover tiles any more; WorldCover
-  stays on the hexagons, in the card).
-- The card at the top right: the imagery year, how many hexagons in view
-  changed in each year, and the clicked hexagon's account (its year-to-year
-  steps, and its land cover from ESA WorldCover 2021).
+- The map is AlphaEarth folded to H3 hexagons over the view. In Kinds of
+  change (A) the quarter of the view whose 64 numbers moved
+  most between the first and last year read is grouped into six kinds by
+  the direction it moved, the view's own drift taken out first; each kind
+  has its own color, and the rest of the ground is faint gray. It is
+  shown from zoom 11.8 (hexagons at res 10), once the land cover below is
+  read; zoomed out the map is AEF Change (S), how far the numbers moved,
+  in viridis.
+- The land cover is read from AlphaEarth every year: a small model per
+  year, taught in each view by Impact Observatory's annual land cover and
+  Overture roads, rail and land use (ESA WorldCover 2021 until they
+  arrive). The key names each kind by what that model reads its ground as
+  in the first and last year.
+- Hold space: the hexagons go and the Sentinel-2 yearly mosaic (Earth
+  Genome, 2022 to 2025) fills the view. Scroll while holding to step
+  through the years; let go and the hexagons come back.
+- The hexagons start at zoom 9; below it the map is the plain basemap.
+  Zoomed in past about 13, every AlphaEarth year from 2017 is read too.
+- The card at the top right: the imagery year, the hexagons in view by the
+  year their change stood out, and the clicked hexagon's account.
+- WSF is off (USE_WSF = False). Its model and the New construction mode
+  are still in the code; USE_WSF = True brings them back on A.
 
 Run: uv run marimo run aef-s2-kinds-of-change.py --sandbox (it fills the window;
 X or Esc gives the notebook back)
@@ -77,6 +60,10 @@ Satellite Embedding dataset is produced by Google and Google DeepMind"
 (CC BY 4.0). ESA WorldCover 10 m
 2021 v200 (c) ESA WorldCover project, contains modified Copernicus Sentinel
 data (2021) processed by the ESA WorldCover consortium (CC BY 4.0).
+Impact Observatory, Microsoft and Esri 10 m annual land use and land cover
+v02, via Microsoft Planetary Computer (CC BY 4.0). Overture Maps
+transportation and land use, (c) OpenStreetMap contributors (ODbL), via
+Source Cooperative (fused/overture).
 Sentinel-2 yearly mosaics by Earth Genome (CC BY 4.0). Photon (komoot) over
 OpenStreetMap data (ODbL). Place names from Overture Maps divisions:
 (c) OpenStreetMap contributors, Overture Maps Foundation (ODbL), with
@@ -182,31 +169,60 @@ def _(mo):
     mo.md("""
     # Kinds of change
 
-    The hexagons are the places that look like new construction over the
-    year window, colored by the year they changed. What counts as new
-    construction is learned in every view from the World Settlement
-    Footprint: the places WSF saw built are the examples, and AlphaEarth
-    finds the places that look like them, WSF's or not. **Hold space** to see the Sentinel-2 imagery instead;
-    **scroll** while holding to change its year; let go for the hexagons
-    again. **Click** a hexagon for its account and its land cover (gold
-    outline); click it again to clear it. **Click on the imagery** (space
-    held) to pick the cell there: the card adds its H3 string and lat, long,
-    each with a copy button. The hexagons start at zoom 9.
+    <small>v3 of the AlphaEarth notebooks in this repo, after
+    `aef-s2-landcover-explorer.py` (v1) and `aef-s2-new-construction.py`
+    (v2).</small>
+
+    **What you are looking at.** Every 10 m of ground has 64 AlphaEarth
+    numbers a year, 2017 to 2025. The map folds them to hexagons and asks
+    how each hexagon's numbers moved between the first and last year read
+    (2021 to 2025 to start). The quarter of the view that moved most is
+    grouped into six **kinds** by the direction it moved: hexagons of one
+    color changed the same way, whatever size they are and wherever they
+    sit. The rest of the ground is faint gray. Nothing tells the map what
+    to look for; the kinds come from AlphaEarth alone, and they are this
+    view's: pan or zoom and it groups again.
+
+    **Zoomed out it is AEF Change.** Kinds of change is shown from zoom
+    11.8 (hexagons at res 10). Below that the map is AEF Change, how far
+    each hexagon's numbers moved, in viridis, and the Kinds of change
+    button is grayed, with the zoom it appears at and the zoom now under
+    it. Zoom in and the hexagons come in AEF Change; the land cover is read
+    behind them, and when it is in the Kinds of change button flashes
+    (and keeps a small blue dot). Press `A` or click it to switch.
+
+    **The key** (top left) lists the kinds, largest first: how many
+    hexagons, the year most of them changed, and what AlphaEarth reads
+    their ground as in the first and last year (`cropland → built-up`, or
+    `stays water`). Those land cover names are learned in the view from
+    Impact Observatory's yearly maps and Overture roads and land use, which
+    arrive a little after the hexagons. Click a kind to hide it, again to
+    show it.
+
+    **Checking it.** **Hold space** to swap the hexagons for the Sentinel-2
+    yearly imagery; **scroll** while holding to change its year; let go for
+    the hexagons again. **Click** a hexagon for its account (gold outline):
+    how much it changed and when, its kind, what AlphaEarth reads it as
+    each year, each year-to-year step, and ESA WorldCover 2021's shares.
+    Click it again to clear it. **Click on the imagery** (space held) for
+    the cell's H3 string and lat, long, each with a copy button. **Drag
+    either end** of Years read to change the years, it reads again when
+    you let go. The hexagons start at zoom 9.
 
     | Key | Does |
     | --- | --- |
+    | `A` | Kinds of change (from zoom 11.8, once the land cover is read; its button flashes when ready) |
+    | `S` | AEF Change: how far the numbers moved, in viridis |
     | `space` (hold) | the Sentinel-2 imagery instead of the hexagons; the map still drags |
     | scroll, space held | the imagery year |
     | `[` `]` | the imagery year, back and forward |
     | `;` `'` | the imagery darker, brighter |
-    | `A` | New construction: only what looks newly built |
-    | `S` | AEF Change: how much it changed |
     | `-` `=` | the first year read, earlier, later |
     | `_` `+` | the last year read, earlier, later |
     | `L` | place names on the map, off and on |
-    | `/` | search a place, or paste an H3 string (flies there, outlined in blue) |
+    | `/` | search a place, or paste an H3 string (`↑` `↓` pick, `Enter` flies there, outlined in blue) |
     | `X` | fill the window, and back |
-    | `Esc` | close the about box, the menu, the card, then fill the window |
+    | `Esc` | clear the searched outline, then close the about box, the menu, the card, then leave the full window |
 
     [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-kinds-of-change.py)
     <small>molab runs in the same region as the data and is the faster place to open this notebook.
@@ -355,6 +371,15 @@ def _(os, tempfile):
     # The groups are this view's: another view groups again.
     KINDS_K = 6
     KINDS_TOP = 0.25
+    # Kinds of change only zoomed in (Stephen, 2026-09-27: "the kinds of
+    # change only really work that well when I'm zoomed fairly zoomed in",
+    # "default back to AEF change when we zoomed out ... start to load the
+    # context with all the data sets but only show it when it's ready").
+    # Below this hexagon res the map is AEF Change and the land cover
+    # teachers are not read; from it, they are read after the hexagons are
+    # up and Kinds of change is drawn once they are in.
+    KINDS_MIN_RES = 10
+    KINDS_MIN_ZOOM = round(ZOOM0 + PER_RES * (KINDS_MIN_RES - BASE_RES), 1)
     # ---- LAND COVER READ FROM ALPHAEARTH, every year (Stephen, 2026-09-27:
     # "get like the vectors for built up from the ESA in the view ... it can
     # say cropland to built up", then "Overture land use ... Overture
@@ -464,6 +489,8 @@ def _(os, tempfile):
         HOLD_SLOP_PX,
         HOME,
         KINDS_K,
+        KINDS_MIN_RES,
+        KINDS_MIN_ZOOM,
         KINDS_TOP,
         IO_CLASSES,
         IO_COLLECTION,
@@ -637,7 +664,54 @@ def _(
     # `aef_fold(box, res, year)` for any year in AEF_YEARS_ALL (2017..2025, the
     # whole run; the window control picks from them); each year has its own COG index
     # slice (cached as parquet under tmp) and its own mosaic time index.
-    _store = S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, client_options=S3_OPTS)
+    class _Kept:
+        """THE COG READS, KEPT FOR THE SESSION (Stephen, 2026-09-27: "we can
+        cache but we cant collect"): the compressed byte ranges async-geotiff
+        asks for (one per band per tile, ~0.38 MB; a 1024 tile of 64 bands
+        ~24 MB, 41 km of ground at 40 m) are kept in memory, oldest dropped
+        past the cap, gone when the kernel stops. Zooming, panning nearby
+        and changing the years read reuse the tiles instead of downloading
+        them again."""
+
+        def __init__(self, inner, cap):
+            self._in, self._cap, self._kept, self.held = inner, cap, {}, 0
+            self.reused = self.fetched = 0
+
+        def _take(self, k):
+            b = self._kept.pop(k, None)
+            if b is not None:
+                self._kept[k] = b  # to the newest end
+                self.reused += len(b)
+            return b
+
+        def _put(self, k, b):
+            self._kept[k] = b
+            self.held += len(b)
+            self.fetched += len(b)
+            while self.held > self._cap and self._kept:
+                self.held -= len(self._kept.pop(next(iter(self._kept))))
+
+        async def get_range_async(self, path, *, start, end=None, length=None):
+            end = start + length if end is None else end
+            b = self._take((path, start, end))
+            if b is None:
+                b = await self._in.get_range_async(path, start=start, end=end)
+                self._put((path, start, end), b)
+            return b
+
+        async def get_ranges_async(self, path, *, starts, ends=None, lengths=None):
+            ends = [a + n for a, n in zip(starts, lengths)] if ends is None else list(ends)
+            out = [self._take((path, a, e)) for a, e in zip(starts, ends)]
+            miss = [i for i, b in enumerate(out) if b is None]
+            if miss:
+                got = await self._in.get_ranges_async(path, starts=[starts[i] for i in miss], ends=[ends[i] for i in miss])
+                for i, b in zip(miss, got):
+                    out[i] = b
+                    self._put((path, starts[i], ends[i]), b)
+            return out
+
+    # 2 GB: about 80 tiles
+    _store = _Kept(S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, client_options=S3_OPTS), 2 * 1024 ** 3)
     _mstore = S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, prefix=AEF_PREFIX, client_options=S3_OPTS)
     _ds = xr.open_zarr(ObjectStore(_mstore, read_only=True), chunks=None, consolidated=False)
     _ti = {y: int(np.where(_ds.time.values == y)[0][0]) for y in AEF_YEARS_ALL}
@@ -818,6 +892,7 @@ def _(
         return out, (
             f"AEF {year} ov{li} ({10 * 2 ** (li + 1)} m) {len(parts)} files {npx / 1e6:.2f} Mpx "
             f"{t1 - t0:.1f} s · fold {out.num_rows:,} {time.time() - t1:.1f} s"
+            f" · kept {_store.held / 1e6:,.0f} MB (fetched {_store.fetched / 1e6:,.0f}, reused {_store.reused / 1e6:,.0f})"
         )
 
     return aef_fold, aef_window
@@ -2218,6 +2293,13 @@ def _(anywidget, asyncio, time, traitlets):
         .at-kinds button i{width:14px;height:14px;border-radius:3px;flex:none}
         .at-kinds button span{color:var(--muted)}
         .at-kinds button.off{opacity:.4}
+        .at button.wait{opacity:.4}
+        @keyframes at-ready{0%{box-shadow:0 0 0 0 rgba(0,114,178,.5)}100%{box-shadow:0 0 0 6px rgba(0,114,178,0)}}
+        .seg-s button.ready{animation:at-ready 1.2s ease-out 2}
+        .seg-s button.fresh{position:relative}
+        .seg-s button.fresh::before{content:"";position:absolute;top:4px;left:3px;width:5px;height:5px;border-radius:50%;background:var(--cool)}
+        .at-soon{justify-content:space-between;font-size:11.5px;color:var(--muted);margin-top:-4px}
+        .at-soon .z{font-variant-numeric:tabular-nums;color:var(--text)}
         .at-kinds button.off i{background:none!important;border:1.5px dashed var(--muted)}
         .at-kind-dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
         .seg-s.col button{text-align:left;display:flex;align-items:center;justify-content:space-between;gap:14px}
@@ -2403,7 +2485,7 @@ def _(anywidget, asyncio, time, traitlets):
           const A_FILL = cfg.alpha_fill || 235, A_QUIET = cfg.alpha_quiet || 70;
           const HEXZ = cfg.hex_zoom || 9, HOLD_MS = cfg.hold_ms || 200, SLOP = cfg.hold_slop || 5;
           const st = {
-            gmode: cfg.use_wsf ? "new" : "kinds", hideKinds: new Set(), y0: cfg.aef_from || 2022, y1: cfg.aef_to || 2025,
+            gmode: cfg.use_wsf ? "new" : "much", want: cfg.use_wsf ? "new" : "much", hideKinds: new Set(), y0: cfg.aef_from || 2022, y1: cfg.aef_to || 2025,
             imgYear: cfg.s2_year || S2Y[S2Y.length - 1], labels: true, s2scale: Number(cfg.s2_scale) || 1,
             fit: !!cfg.fit, holding: false,
           };
@@ -2435,6 +2517,12 @@ def _(anywidget, asyncio, time, traitlets):
           panelCb.onclick = (e) => { e.stopPropagation(); foldPanel(!panel.classList.contains("collapsed")); };
           foldPanel(keep("panel"));
           const rowOf = (label) => { const r = el_("div", "at-row"); if (label) r.appendChild(el_("span", "at-lab", label)); panel.appendChild(r); return r; };
+          // Kinds of change is drawn only zoomed in with its land cover read (hmeta.kinds_ready), and only
+          // once asked for: the map never switches to it by itself, its button flashes when it is ready
+          // (Stephen, 2026-09-27: "i dont think the map should switch to kind of change auto just the
+          // button should flash when it's ready")
+          const kindsWait = () => st.want === "kinds" && !hmeta.kinds_ready;
+          const drawnMode = () => kindsWait() ? "much" : st.want;
           const segOf = (row, items, isOn, onClick) => {
             const seg = el_("div", "seg-s col");
             const bs = items.map(([k, label, title, key]) => { const b = el_("button", "", label); b.title = title ? title + (key ? " (" + key + ")" : "") : ""; if (key) b.appendChild(el_("kbd", "", key)); b.onclick = () => onClick(k); seg.appendChild(b); return b; });
@@ -2443,10 +2531,37 @@ def _(anywidget, asyncio, time, traitlets):
           };
           const rFill = rowOf("Color by");
           rFill.classList.add("top");
-          const styleFill = segOf(rFill, [cfg.use_wsf ? ["new", "New construction", "only the hexagons that look like the places WSF saw built in this view, colored by the year they changed", "A"]
+          const styleSeg = segOf(rFill, [cfg.use_wsf ? ["new", "New construction", "only the hexagons that look like the places WSF saw built in this view, colored by the year they changed", "A"]
                                             : ["kinds", "Kinds of change", "the ground that moved most, grouped by the way it moved: the same color changed the same way. Click a kind in the key to hide or show it", "A"],
                                           ["much", "AEF Change", "how far the ground's AlphaEarth numbers moved between the first and last year read", "S"]],
-                                  (k) => k === st.gmode, (k) => { st.gmode = k; recolorHex(); styleRows(); renderYear(); update(); });
+                                  (k) => k === st.gmode, (k) => { if (k === "kinds" && !hmeta.kinds_ready) return; st.want = k; st.gmode = drawnMode(); recolorHex(); styleRows(); renderYear(); update(); });
+          // while Kinds of change waits: its button grayed, and a line under it with the zoom it
+          // appears at and the zoom now (Stephen, 2026-09-27: "nice and tidy in that left panel")
+          const rSoon = rowOf("");
+          rSoon.classList.add("at-soon");
+          const soonTxt = el_("span", "t"), soonZ = el_("span", "z");
+          rSoon.append(soonTxt, soonZ);
+          const styleSoon = () => {
+            const z = map ? map.getZoom() : 0, KZ = cfg.kinds_zoom || 11.8;
+            const show = !cfg.use_wsf && !hmeta.kinds_ready && z >= HEXZ;
+            rSoon.style.display = show ? "" : "none";
+            if (!show) return;
+            soonTxt.textContent = z < KZ ? `Kinds of change appears at zoom ${KZ}` : "Kinds of change: reading the land cover";
+            soonZ.textContent = `zoom ${z.toFixed(1)}`;
+          };
+          // the moment Kinds of change is ready, a soft ring on its button, twice (Stephen, 2026-09-27:
+          // "subtle cue that the kinds of change is ready on the button"); and a small dot on it while
+          // it is ready but AEF Change is the one chosen
+          let kindsWaited = false;
+          const styleFill = () => {
+            styleSeg();
+            const b = rFill.querySelector("button"), ready = !cfg.use_wsf && !!hmeta.kinds_ready;
+            b.classList.toggle("wait", !cfg.use_wsf && !ready);
+            if (ready && kindsWaited) { b.classList.remove("ready"); void b.offsetWidth; b.classList.add("ready"); }
+            kindsWaited = !cfg.use_wsf && !ready;
+            b.classList.toggle("fresh", ready && st.want !== "kinds");
+            styleSoon();
+          };
           const rKey = rowOf("");
           rKey.classList.add("keep");
           const keyEl = el_("span", "at-key");
@@ -2488,6 +2603,7 @@ def _(anywidget, asyncio, time, traitlets):
             panelHd.querySelector(".t").textContent = st.gmode === "new" ? "New construction" : st.gmode === "kinds" ? "Kinds of change" : "AEF Change";
             // no hexagons zoomed out, so nothing to color (Stephen, 2026-09-25)
             rFill.style.display = out_ ? "none" : "";
+            styleSoon();
             if (out_) {
               keyEl.innerHTML = `<span class="why">Zoom in to ${HEXZ} for the hexagons.</span>`;
               return;
@@ -2543,12 +2659,13 @@ def _(anywidget, asyncio, time, traitlets):
 
           const about = el_("div", "at-about");
           about.innerHTML = `<div class="box at-glass">
-            <h2>Where the ground changed</h2>
-            <p><b>New construction</b> (the default, A): in every view, the places the <b>World Settlement Footprint</b> saw built inside the years read are the examples, against ground that changed without being built. A small model learns what they look like in AlphaEarth (the first and last year) and scores every hexagon; only the ones that look like new construction are drawn, colored by the year they changed, fainter the less sure. Some of them WSF never recorded: click one to see what WSF says there. Zoomed in past 13, every year from 2017 is read after the hexagons are up: the card says whether a change held, came back, changes most years or kept changing, and the ones that came back or change most years are left out.</p>
-            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. In AEF Change, the hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Hexagons fade where they barely moved. Click one for the year its change stood out most: each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all).</p>
-            <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: move it off what you want to see, drag the map to look around, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
-            <p><b>Click</b> a hexagon for its account: each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. WorldCover is one map of one year, so it says what a place is, not when it changed.</p>
-            <p><small>Keys: hold space for the imagery, scroll for its year; A New construction, S AEF Change; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search (a place, or paste an H3 string); Esc close.</small></p>
+            <h2>Kinds of change</h2>
+            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. <b>Kinds of change</b> (A) takes the quarter of the view whose numbers moved most between the first and last year read and groups it by the direction it moved, after taking off the drift the whole view made. Hexagons of one color changed the same way; the rest of the ground is faint gray. The kinds are this view's own: move and it groups again. They are there from zoom ${cfg.kinds_zoom || 11.8}, once the land cover is read: the button flashes, and A shows them. Zoomed out the map is AEF Change.</p>
+            <p><b>The key</b> lists the kinds, largest first: how many hexagons, the year most of them changed, and what AlphaEarth reads their ground as in the first and last year. That reading is learned in the view from Impact Observatory's yearly land cover and Overture roads and land use, and arrives after the hexagons. Click a kind to hide or show it.</p>
+            <p><b>AEF Change</b> (S) shows how far the numbers moved, in viridis, stretched to what is in view: yellow moved most.</p>
+            <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: drag the map, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
+            <p><b>Click</b> a hexagon for its account: how much it changed and when, its kind, what AlphaEarth reads it as each year, each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. Zoomed in past 13, every year from 2017 is read and the card says what the ground did after its change.</p>
+            <p><small>Keys: A Kinds of change, S AEF Change; hold space for the imagery, scroll for its year; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; / search (a place, or paste an H3 string); X fill the window; Esc close.</small></p>
             <p><small>WSF Tracker &copy; DLR and MindEarth, via Source Cooperative (mindearth/wsf), CC BY 3.0 IGO. AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Impact Observatory, Microsoft and Esri 10 m annual land use and land cover v02, via Microsoft Planetary Computer (CC BY 4.0). Overture Maps transportation and land use, &copy;&nbsp;OpenStreetMap contributors (ODbL), via Source Cooperative (fused/overture). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions, &copy;&nbsp;OpenStreetMap contributors, Overture Maps Foundation (ODbL), with geoBoundaries, Esri Community Maps contributors and LINZ (CC BY 4.0): the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
           pane.appendChild(about);
@@ -2755,8 +2872,8 @@ def _(anywidget, asyncio, time, traitlets):
             if (c.level == null) h += `<p>No AlphaEarth data here.</p>`;
             else {
               h += `<p>AlphaEarth: the ground changed <b>${howMuch(c.level)}</b> from ${c.y0} to ${c.y1}, compared with the rest of the view. Its year-to-year change stood out most between the <b>${c.big - 1} and ${c.big}</b> pictures${c.stand != null ? `, ${c.stand.toFixed(1)} times the usual step in view that year` : ""}.</p>`;
-              if (c.kind_n) { const q = (c.kinds || [])[c.kind_n - 1] || {}; h += `<p class="sub"><i class="at-kind-dot" style="background:${kindCss(c.kind_n)}"></i><b>Kind ${c.kind_n}</b> of ${(c.kinds || []).length}: changed the way ${fmt(q.n || 0)} hexagons in view did${q.from ? `; ${Math.round(100 * q.pair_share)}% of it reads ${q.from === q.to ? `as ${esc(q.from)} in both ${c.y0} and ${c.y1}` : `as ${esc(q.from)} in ${c.y0} and ${esc(q.to)} in ${c.y1}`}` : ""}.</p>`; }
-              else if (c.level != null) h += `<p class="sub">Not in a kind: it moved less than the quarter of the view that moved most.</p>`;
+              if (c.kind_n && hmeta.kinds_ready) { const q = (c.kinds || [])[c.kind_n - 1] || {}; h += `<p class="sub"><i class="at-kind-dot" style="background:${kindCss(c.kind_n)}"></i><b>Kind ${c.kind_n}</b> of ${(c.kinds || []).length}: changed the way ${fmt(q.n || 0)} hexagons in view did${q.from ? `; ${Math.round(100 * q.pair_share)}% of it reads ${q.from === q.to ? `as ${esc(q.from)} in both ${c.y0} and ${c.y1}` : `as ${esc(q.from)} in ${c.y0} and ${esc(q.to)} in ${c.y1}`}` : ""}.</p>`; }
+              else if (c.level != null && hmeta.kinds_ready) h += `<p class="sub">Not in a kind: it moved less than the quarter of the view that moved most.</p>`;
               if (c.hist && c.ccode) h += `<p class="sub">${histText(c.ccode, c.big, c.hist, c.cratio)}${c.hbig > 0 && (c.hbig <= c.y0 || c.hbig > c.y1) ? ` Its biggest step from ${c.hist[0]} to ${c.hist[1]} was into ${c.hbig}, outside the years read.` : ""}</p>`;
               if (c.reads && c.reads.length) h += `<p>AlphaEarth reads it as ${readRuns(c.reads)}.</p><p class="sub">Learned in this view from ${esc(c.lc_source || "land cover maps")}: ${esc((c.lc_classes || []).join(", "))}. It can only name those.</p>`;
               h += stepBars(c.rel, c.steps, c.step_years, c.big);
@@ -3203,7 +3320,7 @@ def _(anywidget, asyncio, time, traitlets):
             if (tgt && /^(INPUT|SELECT|TEXTAREA)$/.test(tgt.tagName)) return;
             const k = e.key, lo = st.y0, hi = st.y1;
             if (k === " ") { if (!e.repeat) spaceDown(); }
-            else if (/^[aAsS]$/.test(k)) { const m = (k === "s" || k === "S") ? "much" : cfg.use_wsf ? "new" : "kinds"; if (m !== st.gmode) { st.gmode = m; recolorHex(); styleRows(); renderYear(); update(); } }
+            else if (/^[aAsS]$/.test(k)) { const w = (k === "s" || k === "S") ? "much" : cfg.use_wsf ? "new" : "kinds"; if (w === "kinds" && !hmeta.kinds_ready) return; st.want = w; const m = drawnMode(); if (m !== st.gmode) { st.gmode = m; recolorHex(); renderYear(); update(); } styleRows(); }
             else if (k === "[" || k === "]") stepImg(k === "]" ? 1 : -1);
             else if (k === ";" || k === "'") { st.s2scale = Math.round(10 * Math.max(0.3, Math.min(2.5, st.s2scale + (k === "'" ? 0.1 : -0.1)))) / 10; gam.value = st.s2scale; clearTimeout(gamT); gamT = setTimeout(() => send("s2scale"), 250); }
             else if (k === "-" || k === "=") { const v = Math.max(aefYears[0], Math.min(hi - 1, lo + (k === "=" ? 1 : -1))); if (v !== lo) { st.y0 = v; winSent = [st.y0, st.y1]; styleWin(); send("aef"); } }
@@ -3254,6 +3371,7 @@ def _(anywidget, asyncio, time, traitlets):
             });
             map.on("moveend", sendView);
             map.on("zoomend", () => { update(); renderYear(); styleKey(); });
+            map.on("zoom", styleSoon);
             map.on("mousemove", (e) => {
               if (holdT) return;
               // over the imagery: the white outline follows the pointer, no tooltip
@@ -3286,6 +3404,10 @@ def _(anywidget, asyncio, time, traitlets):
             try { hmeta = JSON.parse(model.get("hmeta") || "{}"); } catch (e) { hmeta = {}; }
             // the kinds are grouped again for every new frame: what was hidden no longer means the same
             if (hmeta.seq !== seq0) st.hideKinds.clear();
+            // zoomed out of Kinds of change: back to AEF Change, and it stays there when zooming in again
+            if (kindsWait()) st.want = "much";
+            st.gmode = drawnMode();
+            styleFill();
             if (!cb || !cb.length) { hexes = []; N = 0; hexIndex = new Map(); res = -1; hattrs = null; hcol = null; hcol32 = null; renderYear(); styleKey(); update(); return; }
             const ids = new BigUint64Array(copyOf(cb));
             N = ids.length; hexes = new Array(N); hexIndex = new Map();
@@ -3320,124 +3442,116 @@ def _(mo):
     mo.md("""
     ## How it works
 
-    **New construction (Oranges, `A`), taught by WSF.** The World Settlement Footprint
-    tracker (DLR and MindEarth) dates, every half year from mid-2016 to
-    the end of 2025, when each 10 m pixel first read as built-up. For the
-    view on screen it is read on a stride and folded to the same finer H3
-    cells as AlphaEarth (below). A finer cell is an example of NEW
-    construction when at least 20% of its WSF samples first read as built
-    after the first year read, up to the last; it is UNCHANGED when under
-    2% were built from the first year on (built before, or never built).
-    Cells in between teach nothing. A logistic regression on each cell's
-    first- and last-year AlphaEarth vectors (128 numbers and an offset,
-    fit with numpy by Newton's method) learns the difference, on up to
-    6,000 new and 24,000 unchanged cells, with the odds corrected back to
-    the view's own mix. Half of the unchanged cells are drawn from ground
-    that moved in AlphaEarth at least as much as the lower quarter of WSF's
-    new places (fields that turned over, roads, cleared land, water), and
-    each of those counts twice its share of the view: the model is taught
-    built against other change, not change against quiet ground. At Wuhan
-    (2021 to 2025, zoom 10.5) that took its picks of such ground from 1.1%
-    to 0.8% and the share of its picks WSF calls new from 87% to 90%, and
-    it finds 52% of WSF's new places instead of 57%. It then scores every finer cell, WSF's or not, and
-    each hexagon takes its best-scoring one. Hexagons scoring 0.5 or more
-    are drawn, in the year palette below by that cell's change year. A
-    fifth of the examples is held out, and the status line says how many of
-    WSF's new places the model finds and how many of its picks WSF also
-    calls new. The model is learned in a view with at least 25 new places
-    by WSF and kept while zooming in under it, so a close view with no WSF
-    building of its own is still scored ("in the wider view" in the key).
-    Zooming out, moving off it or changing the years read teaches it
-    again. Nothing is saved to disk. Where no view so far has had enough to
-    learn from, the key says so.
-
-    The picks WSF did not record are the point: construction WSF missed,
-    or ground that changed the way construction does (cleared, graded,
-    paved). Holding space shows the imagery to tell which.
-
-    **The whole history, zoomed in.** From about zoom 13.2 (the hexagons at
-    res 11, where the full mosaic is read and a view is small) every
-    AlphaEarth year, 2017 to 2025, is read, whatever the window. The
-    window's hexagons come first as usual; the other years are read in the
-    background and the same hexagons are updated when they arrive, so
-    nothing waits on them. Each
-    hexagon's change year splits its years into before and after, and the
-    card says what the ground did around it: one step that held, came back
-    (by the last year it is closer to the ground before than to the change
-    year), changes this much most years (the step is under twice the
-    cell's own median step), kept changing after (the steps after it stay
-    at twice the usual), or too recent to tell. Steps are multiples of
-    their year's median step in view, since the embeddings drift as a whole
-    from year to year. New construction leaves out the hexagons that came
-    back or change this much most years; the key counts them. AEF Change
-    stays raw. Kept changing is common on WSF's own new places (sites build
-    out over years), so it describes and does not filter. Reading nine
-    years instead of five took a view at zoom 13.5 from about 10 s to 17 s
-    when it was read up front.
-
     **AlphaEarth, folded to H3.** Every 10 m pixel of the AlphaEarth
     Foundations embedding is 64 numbers describing the ground for one year.
     For the view on screen, the notebook reads each year in the window
     (2021 to 2025 by default, 2017 to 2025 available) from Source
     Cooperative: the COG overviews at coarser hexagons, the zarr mosaic
     from res 11 in. Each pixel's lon/lat goes through an h3ronpy UDF inside
-    DataFusion (via xarray-sql), and the pixels are averaged per cell,
-    one fold per year. The hexagon size follows the zoom.
+    DataFusion (via xarray-sql), and the pixels are averaged per cell, one
+    fold per year. The hexagon size follows the zoom.
 
-    **The brightest patch, not the average.** Averaging every pixel in a
-    hexagon into one vector a year and measuring the change of that
-    average loses small change: a small site that changed a lot, inside a
-    hexagon of quiet ground, is averaged away, dark zoomed out and only lit
-    up zoomed in. Here it runs in three steps:
+    **The brightest patch, not the average.** The fold runs one H3 level
+    finer than the hexagons on screen (res 9 cells under res 8 hexagons at
+    zoom 9), about one pixel of the read per finer cell. Everything below
+    is worked out per finer cell; then h3ronpy's `change_resolution` gives
+    each finer cell its parent hexagon, and each hexagon takes its
+    most-changed finer cell whole: its change, its year, its kind, its
+    steps. A small site that changed a lot inside a hexagon of quiet ground
+    keeps the hexagon lit instead of being averaged away.
 
-    1. The fold runs one H3 level finer than the hexagons on screen (res 9
-       cells under res 8 hexagons at zoom 9), about one pixel of the read
-       per finer cell. Averaging only happens inside a finer cell.
-    2. The change is worked out per finer cell, from that cell's own
-       vectors across the years.
-    3. h3ronpy's `change_resolution` gives each finer cell its parent
-       hexagon, and each hexagon takes its most-changed finer cell whole:
-       its change, its year, its steps.
+    **How far it moved.** Each finer cell's vector is normalized every
+    year, and `disp` is 1 minus the cosine between the first and last year
+    read: 0 means the numbers did not move. AEF Change (`S`) colors
+    hexagons by `disp` in viridis, stretched to this view's 2nd to 98th
+    percentile, so the colors rank hexagons against their neighbors, not
+    the world. Ground that barely moved is drawn faint.
 
-    So a hexagon shows its strongest spot, not its average, and one changed
-    site keeps a big hexagon bright zoomed out. `finer_cells` in the table
-    under the map is how many finer cells each hexagon picked from.
+    **Kinds of change (`A`).** For every finer cell, the change is its last
+    year's vector minus its first. The mean change over the whole view is
+    taken off first: the embeddings drift as a whole between years, and
+    without this every kind would lean the same way. The finer cells in the
+    top quarter of the view by `disp` are kept, their change directions
+    normalized, and grouped by spherical k-means into six kinds (k-means++
+    start, fit on a sample of 20,000, then every kept cell goes to its
+    nearest kind). Kinds are numbered largest first and drawn in the
+    Okabe-Ito colors, fuller the more the hexagon moved; hexagons in no
+    kind are faint gray. The grouping needs at least 300 moved cells. Since
+    the kinds are the view's own, kind 1 here is not kind 1 in the next
+    view, and hiding a kind lasts until the view changes.
+
+    Zoomed out the groups change a lot from one zoom to the next, so Kinds
+    of change is drawn only from hexagon res 10 (zoom 11.8, `KINDS_MIN_RES`
+    in the constants), and only once the land cover below has been read
+    for the view. Until then the map is AEF Change, the `A` button is
+    grayed, and a line under it gives the zoom it appears at and the zoom
+    now. When it is ready the button flashes and keeps a small blue dot;
+    the map does not switch by itself, `A` does. Zooming back out returns
+    to AEF Change.
+
+    **The land cover, read from AlphaEarth every year.** To name a kind,
+    the notebook learns in each view what the land cover looks like in
+    AlphaEarth, year by year: a logistic regression per year on the 64
+    numbers, one class per finer cell, among trees, grass, cropland,
+    built-up, bare, water, wetland, road and construction. The teachers,
+    per finer cell:
+
+    - Impact Observatory's annual land cover (10 m, 2017 to 2023, on
+      Planetary Computer) teaches its own year on all ground. 2024 and 2025
+      have no map, so the nearest year's map teaches only ground that
+      barely moved (at or under the view's median `disp`).
+    - Overture roads and rail (major roads by width) make a cell a road;
+      its land use makes construction sites, quarries and landfill
+      "construction", and residential and industrial land "built-up".
+      Overture describes today, so it teaches the last year on all ground
+      and earlier years only on ground that barely moved.
+    - ESA WorldCover 2021 stands in, on hexagons that are mostly one class,
+      until Impact Observatory has been read.
+
+    A cell teaches only when 70% of it is one class, and a class needs 30
+    examples to be learned. The teachers are read only from zoom 11.8, and
+    they are slow, so the hexagons come first and the land cover follows;
+    Kinds of change, its key and the card's readings come when it does. The key gives each kind's most
+    common pair of first- and last-year readings and its share. The model
+    can only name the classes it saw in the view; the card lists them.
+
+    **The change year.** Every year-to-year step is scored the same way
+    (1 minus the cosine). Because of the drift between years (over Lagos
+    the 2024 to 2025 median step is about twice the others) each step is
+    divided by that year's median step in view, and the change year is the
+    step that stands out most. The key gives each kind's most common
+    change year; the card shows a clicked hexagon's steps against 1.
+
+    **The whole history, zoomed in.** From about zoom 13.2 (res 11, where
+    the full mosaic is read and a view is small) every AlphaEarth year from
+    2017 to 2025 is read in the background once the window's hexagons are
+    up. The card then says what the ground did around its change year: one
+    step that held, came back (by the last year closer to the ground before
+    than to the change year), changes this much most years (the step is
+    under twice the cell's own median step), kept moving after, or too
+    recent to tell. It describes; nothing is hidden because of it.
+
+    **What is there (ESA WorldCover 2021).** The same fold on ESA's class
+    raster: a count of pixels per class per hexagon, shown as shares on the
+    card. It is one year only, so it describes the ground and dates
+    nothing.
+
+    **What happened (Sentinel-2).** Holding space swaps the hexagons for
+    Earth Genome's yearly true-color mosaic, 2022 to 2025 (found through
+    their STAC, holes filled from the temporal mosaic), so what a kind
+    points to can be checked by eye. Nothing colored is drawn over it,
+    only the outlines of the hovered, picked and searched hexagons.
 
     **Drawn as tiles.** The hexagons reach the browser as map tiles in
     which each pixel names the hexagons near it. The shader draws each
-    hexagon's edge from its H3 boundary (h3-js), covering a fragment by its
-    distance to the edge over one screen pixel, so edges stay smooth at any
-    zoom. Colors come from a small table, so switching between New
-    construction and AEF Change recolors without new tiles. Hover and click look
-    the hexagon up from the pointer with h3-js. The browser draws images,
-    however many hexagons there are.
+    hexagon's edge from its H3 boundary (h3-js), so edges stay smooth at
+    any zoom. Colors come from a small table, so switching modes or hiding
+    a kind recolors without new tiles.
 
-    **AEF Change (viridis, `S`).** Each finer cell's yearly vector is
-    normalized, and `disp` is 1 minus the cosine between the window's first
-    and last year: 0 means the fingerprint did not move. A hexagon's `disp`
-    is its most-changed finer cell's. The fill stretches
-    `disp` to this view's 2nd to 98th percentile, so the colors rank the
-    hexagons against their neighbors, not against the world. Hexagons
-    that barely moved are drawn faint.
-
-    **The change year (on the card).** Every year-to-year step is scored
-    the same way. The embeddings drift as a whole between some years (over
-    Lagos the 2024 to 2025 median step is about twice the others), so the
-    raw biggest step would land on 2025 almost everywhere. Each step is
-    divided by that year's median step in view instead, and the change year
-    is the step that stands out most. The card on a clicked hexagon shows
-    those ratios against 1.
-
-    **What is there (ESA WorldCover 2021).** The same fold, on the class
-    raster read straight from ESA's bucket: a count of pixels per class per
-    hexagon, shown as shares. It is one year only, so it describes the
-    ground; it does not date anything.
-
-    **What happened (Sentinel-2).** Holding space swaps the hexagons for
-    Earth Genome's yearly true-color mosaic, 2022 to 2025, so the change
-    the hexagons point to can be checked against the imagery. Nothing
-    colored is drawn over it, only the outlines of the hovered, picked and
-    searched hexagons.
+    **WSF, off for now.** The World Settlement Footprint read and the new
+    construction model it teaches are still in the code (`USE_WSF` in the
+    constants). With it on, `A` is New construction again, as in
+    `aef-s2-new-construction.py`.
     """)
     return
 
@@ -3454,6 +3568,7 @@ def _(
     HOLD_MS,
     HOLD_SLOP_PX,
     HOME,
+    KINDS_MIN_ZOOM,
     LABELS_SLOT,
     OV_DIV_PM,
     RASTER_TILE,
@@ -3479,7 +3594,7 @@ def _(
         "height": VIEW_H, "home": dict(HOME), "labels_slot": LABELS_SLOT, "tile": RASTER_TILE,
         "s2_year": S2_YEAR0, "s2_scale": S2_SCALE0, "s2_gen": 0, "s2_years": list(S2_YEARS), "s2_min_z": S2_TILE_MIN_Z,
         "aef_from": AEF_FROM0, "aef_to": AEF_TO0, "aef_years": list(AEF_YEARS_ALL),
-        "hex_zoom": HEX_ZOOM, "div_pm": OV_DIV_PM, "fit": _fit, "hold_ms": HOLD_MS, "hold_slop": HOLD_SLOP_PX,
+        "hex_zoom": HEX_ZOOM, "kinds_zoom": KINDS_MIN_ZOOM, "div_pm": OV_DIV_PM, "fit": _fit, "hold_ms": HOLD_MS, "hold_slop": HOLD_SLOP_PX,
         "viridis": VIRIDIS, "alpha_fill": ALPHA_FILL, "alpha_quiet": ALPHA_QUIET, "use_wsf": USE_WSF,
     }))
     HOLD = {
@@ -3505,6 +3620,7 @@ def _(
     HOLD,
     IO_YEARS,
     HOME,
+    KINDS_MIN_RES,
     NEW_P_MIN,
     SETTLE,
     WC_CLASSES,
@@ -3658,6 +3774,7 @@ def _(
                 "hist": [int(fr["hyears"][0]), int(fr["hyears"][-1])] if fr.get("hist") else None,
                 "hist_pending": bool(fr.get("hist_pending")),
                 "kinds": fr.get("kinds"), "lc_source": (fr.get("lc_model") or {}).get("source"),
+                "kinds_ready": bool(fr.get("kinds_ready")),
             })
         HOLD["sent"] = fr
 
@@ -3718,10 +3835,11 @@ def _(
             cur = HOLD["frame"]
             if fr is None or cur is None or cur.get("seq") != seq or len(fr["cellid"]) != len(cur["cellid"]):
                 return
-            ineed, oneed = _teach_need(bkey, range(y0, y1 + 1))
+            ineed, oneed = _teach_need(bkey, range(y0, y1 + 1)) if res >= KINDS_MIN_RES else ([], False)
             fr["seq"], fr["km"] = seq, fr0.get("km")
             fr["hist_pending"] = hist and not fr.get("hist")
             fr["teach_pending"] = bool(ineed or oneed)
+            fr["kinds_ready"] = res >= KINDS_MIN_RES and not fr["teach_pending"]
             fr["timing"] = {**(fr0.get("timing") or {}), "later": 1e3 * (t1 - t0), "t_frame": time.time()}
             HOLD["memo"][key] = (fr, stats)
             HOLD["frame"] = fr
@@ -3737,7 +3855,7 @@ def _(
         async def _run():
             t0 = time.time()
             jobs = []
-            ineed, oneed = _teach_need(bkey, range(y0, y1 + 1))
+            ineed, oneed = _teach_need(bkey, range(y0, y1 + 1)) if res >= KINDS_MIN_RES else ([], False)
             if ineed or oneed:
                 jobs.append(asyncio.ensure_future(_teachers()))
             if hist and not fr0.get("hist"):
@@ -3849,8 +3967,10 @@ def _(
             while len(HOLD["memo"]) > 12:
                 HOLD["memo"].pop(next(iter(HOLD["memo"])))
         fr["hist_pending"] = hist and not fr.get("hist")
-        _in, _on_ = _teach_need((res, rbox), years)
+        # the land cover teachers only where Kinds of change is shown (KINDS_MIN_RES)
+        _in, _on_ = _teach_need((res, rbox), years) if res >= KINDS_MIN_RES else ([], False)
         fr["teach_pending"] = bool(_in or _on_)
+        fr["kinds_ready"] = res >= KINDS_MIN_RES and not fr["teach_pending"]
         HOLD["frame"], HOLD["box"], HOLD["res"] = fr, box, res
         _paint()
         HOLD["hex_status"] = HOLD["hex_ready"] = (
@@ -4088,18 +4208,20 @@ def _(mo):
     ## Under the map
 
     Press the button once the map has settled to query the current view's
-    hexagons with DuckDB, one row per hexagon, best new-construction score
-    first: `new_score` (the model's score of its best-scoring finer cell),
-    `new_year` (that cell's change year), `wsf_new_share` (the share of its
-    WSF samples first built from the year after the first year read to the
-    last), `wsf_year` (the year WSF saw most of that), `disp` (how far the
-    AlphaEarth fingerprint moved between the first and last year read, 1
-    minus the cosine), `level` (the same, stretched to this view's p2 to p98),
+    hexagons with DuckDB, one row per hexagon, most moved first. Each row's
+    numbers are its most-changed finer cell's: `disp` (1 minus the cosine
+    between the first and last year read), `level` (the same, stretched to
+    this view's p2 to p98), `kind` (its kind of change, 0 in none),
     `big_year` (the year whose step stands out most against that year's
-    median step in view, -2 no data), `finer_cells` (how many finer cells
-    it holds; the row's numbers are its most-changed one), one `step_YYYY` column per step and
-    one `rel_YYYY` with that step over the year's median, `landcover` and `landcover_share` (the main
-    ESA WorldCover 2021 class), and one `wc_` column per class with its share.
+    median step in view, -2 no data), `stands_out` (that step over the
+    median), `finer_cells` (how many finer cells the hexagon holds),
+    `change_history` (zoomed in: held, came back, changes most years, kept
+    moving, too recent), one `step_YYYY` and one `rel_YYYY` (the step over
+    the year's median) per step, one `reads_as_YYYY` per year (the land
+    cover AlphaEarth reads it as), `landcover` and `landcover_share` (the
+    main ESA WorldCover 2021 class) and one `wc_` column per WorldCover
+    class. The WSF columns (`new_score`, `new_year`, `wsf_new_share`,
+    `wsf_year`, `new_history`) are empty while WSF is off.
     """)
     return
 
@@ -4117,7 +4239,7 @@ def _(HOLD, con, mo, tables_btn):
     con.register("view_cells", HOLD["frame"]["cells"])
     view_table = mo.sql(
         """
-        SELECT * FROM view_cells ORDER BY new_score DESC NULLS LAST
+        SELECT * FROM view_cells ORDER BY disp DESC NULLS LAST
         """,
         engine=con,
     )
