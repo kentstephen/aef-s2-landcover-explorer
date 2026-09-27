@@ -1,19 +1,25 @@
 # AEF, Sentinel-2 and landcover explorer
 
-[![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py)
-
 AlphaEarth Foundations embeddings folded to H3 to show where the ground
 changed, read against ESA WorldCover 2021 for what is on the ground, with
 the Earth Genome Sentinel-2 yearly mosaics as the imagery for checking the
-change.
+change. Two notebooks:
+
+- `aef-s2-landcover-explorer.py`: where the ground changed, and when.
+  [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-landcover-explorer.py)
+- `aef-s2-new-construction.py`: only new construction, learned in each
+  view from the World Settlement Footprint and found in AlphaEarth,
+  including places WSF did not record.
+  [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-new-construction.py)
 
 ## Datasets
 
 | Dataset | Producer | Where | License |
 | --- | --- | --- | --- |
 | AlphaEarth Foundations Satellite Embedding, annual, 2017 to 2025 | Google and Google DeepMind ([dataset page](https://developers.google.com/earth-engine/datasets/catalog/GOOGLE_SATELLITE_EMBEDDING_V1_ANNUAL)) | [tge-labs/aef](https://source.coop/tge-labs/aef), [tge-labs/aef-mosaic](https://source.coop/tge-labs/aef-mosaic) | CC BY 4.0 |
+| World Settlement Footprint (WSF) Tracker, 10 m, mid-2016 to the end of 2025 (new construction notebook) | DLR and MindEarth | [mindearth/wsf](https://source.coop/mindearth/wsf) ([DOI 10.5281/zenodo.20424537](https://doi.org/10.5281/zenodo.20424537)) | CC BY 3.0 IGO |
 | ESA WorldCover 10 m 2021 v200 | ESA WorldCover consortium, from Copernicus Sentinel data | `s3://esa-worldcover/v200/2021/map` (AWS open data) | CC BY 4.0 |
-| Overture Maps divisions (place names: PMTiles, and GeoParquet via [fused/overture](https://source.coop/fused/overture)) | Overture Maps Foundation | Overture's release bucket, Source Cooperative | ODbL |
+| Overture Maps divisions (place names: PMTiles release 2026-08-19.0, and GeoParquet release 2026-05-20.0 via [fused/overture](https://source.coop/fused/overture)) | Overture Maps Foundation, from OpenStreetMap, geoBoundaries, Esri Community Maps contributors and LINZ | Overture's release bucket, Source Cooperative | ODbL (the geoBoundaries, Esri and LINZ parts CC BY 4.0); see [Overture attribution](https://docs.overturemaps.org/attribution/) |
 | Photon place search, over OpenStreetMap | komoot | [photon.komoot.io](https://photon.komoot.io/) | ODbL (OpenStreetMap data) |
 | Sentinel-2 yearly mosaics (true color, 2022 to 2025) | Earth Genome, from Copernicus Sentinel data | Found through Earth Genome's STAC API ([stac.earthgenome.org](https://stac.earthgenome.org/), collection `sentinel2-yearly-mosaics`); the COGs are read from [earthgenome/earthindeximagery](https://source.coop/earthgenome/earthindeximagery) on Source Cooperative | CC BY 4.0 |
 | Sentinel-2 temporal mosaics (fills holes in the yearly mosaic, 2022 and 2023) | Earth Genome, from Copernicus Sentinel data | Earth Genome's STAC, collection `sentinel2-temporal-mosaics`; COGs from [earthgenome/sentinel2-temporal-mosaics](https://source.coop/earthgenome/sentinel2-temporal-mosaics) | CC BY 4.0 |
@@ -29,7 +35,7 @@ The STAC's record for `sentinel2-yearly-mosaics` puts `proprietary` in its
 license field, with no license link; the Source Cooperative README is the
 statement of the license.
 
-## The notebook
+## The change notebook
 
 `aef-s2-landcover-explorer.py`: AlphaEarth change hexagons in viridis (how
 much the ground changed over the years read, or, in YlOrBr, the year its
@@ -74,20 +80,56 @@ declared inline, PEP 723):
 uv run marimo run aef-s2-landcover-explorer.py --sandbox
 ```
 
+## The new construction notebook
+
+`aef-s2-new-construction.py` is a copy of the change notebook that shows
+only new construction (`N`, the default; its `S` and `D` modes are still
+there). The World Settlement Footprint tracker dates, every half year,
+when each 10 m pixel first read as built-up. For the view on screen it is
+folded to the same finer H3 cells as AlphaEarth. A finer cell is an
+example of new construction when at least 20% of its WSF samples first
+read as built inside the years read, and of unchanged ground when under
+2% were built from the first year on. A logistic regression on each
+cell's first- and last-year AlphaEarth vectors (128 numbers, fit with
+numpy) learns the difference and scores every cell, WSF's or not. Each
+hexagon takes its best-scoring finer cell, and hexagons scoring 0.5 or
+more are drawn, colored by the year their change stood out. A held-out
+fifth of the examples says how many of WSF's new places the model finds
+and how many of its picks WSF also calls new; the status line reports it.
+
+The model is learned where there is enough to learn from: a view with at
+least 25 new places by WSF. Zoomed in under that view it is kept, so a
+close view with no WSF building of its own is still scored; zooming out,
+moving off it or changing the years read teaches it again. Nothing is
+saved to disk. Clicking a hexagon shows its score, WSF's reading of it
+(newly built share and year, or nothing new) and the AlphaEarth steps.
+Below zoom 9 the map is the plain basemap; WorldCover stays on the
+hexagons, in the card.
+
+```
+uv run marimo run aef-s2-new-construction.py --sandbox
+```
+
 ## Run
 
 Dependencies are declared inline (PEP 723):
 
 ```
 uv run marimo edit aef-s2-landcover-explorer.py --sandbox
+uv run marimo edit aef-s2-new-construction.py --sandbox
 ```
 
 ## Attribution
 
 AlphaEarth Foundations Satellite Embedding dataset by Google and Google
-DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200 (c) ESA WorldCover project,
+DeepMind (CC BY 4.0). WSF Tracker (c) DLR and MindEarth, via Source
+Cooperative (mindearth/wsf, DOI 10.5281/zenodo.20424537), CC BY 3.0 IGO.
+ESA WorldCover 10 m 2021 v200 (c) ESA WorldCover project,
 contains modified Copernicus Sentinel data (2021) processed by the ESA
-WorldCover consortium (CC BY 4.0). Overture Maps divisions (ODbL).
+WorldCover consortium (CC BY 4.0). Overture Maps divisions: (c) OpenStreetMap
+contributors, Overture Maps Foundation (ODbL), with geoBoundaries, Esri
+Community Maps contributors and Land Information New Zealand (LINZ)
+(CC BY 4.0).
 Sentinel-2 yearly and temporal mosaics by Earth Genome (CC BY 4.0),
 found through Earth Genome's STAC API. Search by Photon (komoot)
 over OpenStreetMap data (ODbL). Basemap by Carto. Contains modified
