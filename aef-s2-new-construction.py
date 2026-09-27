@@ -32,8 +32,13 @@ while zooming in under it (Stephen, 2026-09-26: "this needs to work at
 different zooms"); zooming out, moving off it or changing the years read
 teaches it again.
 
-A copy of aef-s2-landcover-explorer.py: its AEF Change (S) and AEF Change
-Year (D) modes are still here; New construction (N) is the default.
+A copy of aef-s2-landcover-explorer.py: its AEF Change mode (S) is still
+here; New construction (A) is the default. The explorer's AEF Change Year
+mode is gone, the change year lives on the card (Stephen, 2026-09-27).
+Also 2026-09-27: the model's unchanged examples lean on ground that
+changed without being built (hard negatives), and zoomed in the whole
+AlphaEarth history is read to say what each change did after (held, came
+back, changes most years, kept changing).
 
 - The map is the AlphaEarth hexagons in viridis: how much the ground's 64
   numbers moved over the year window (or the year its change stood out).
@@ -184,9 +189,8 @@ def _(mo):
     | scroll, space held | the imagery year |
     | `[` `]` | the imagery year, back and forward |
     | `;` `'` | the imagery darker, brighter |
-    | `N` | New construction: only what looks newly built |
+    | `A` | New construction: only what looks newly built |
     | `S` | AEF Change: how much it changed |
-    | `D` | AEF Change Year: the year of the biggest change |
     | `-` `=` | the first year read, earlier, later |
     | `_` `+` | the last year read, earlier, later |
     | `L` | place names on the map, off and on |
@@ -300,6 +304,47 @@ def _(os, tempfile):
     # corrected back to the view's own mix), and holds out a fifth of them
     # to say how well it does against WSF
     NEW_MAX_POS, NEW_MAX_NEG = 6000, 24000
+    # HARD NEGATIVES (Stephen, 2026-09-27: fields, roads, mines "that don't
+    # connect with wsf"): an unchanged cell whose AlphaEarth moved at least as
+    # much as the NEW_HARD_Q quantile of WSF's new cells is ground that
+    # changed without being built. Half the negatives are drawn from those,
+    # and each counts NEW_HARD_W times its share of the view in the fit, so
+    # the model learns built vs. other change, not change vs. quiet.
+    NEW_HARD_Q = 0.25
+    NEW_HARD_W = 2.0
+    # THE WHOLE HISTORY (Stephen, 2026-09-27: "when we zoom in the window could
+    # be more dynamic to tell us more from the whole history"): from this read
+    # res on (about zoom 13.2, where the full-res mosaic is read and a view is
+    # small) every AlphaEarth year is read, not just the window. Each
+    # hexagon's change is then judged by what the ground did around it:
+    # one step that held (construction), came back (fields, water, seasons),
+    # changes this much most years (ground that turns over), kept moving
+    # every year (quarries, mines, sites still building out), or too recent
+    # to tell. New construction leaves out the ones that came back or change
+    # most years. At read res 10 the reads are slow already (Wuhan z12: 35 s
+    # for five years, 47 s for nine); at 11 the nine take about 17 s.
+    HIST_MIN_RES = 11
+    HIST_RESTLESS = 2.0
+
+    # ---- WSF OFF FOR NOW, CLEAR CHANGE FROM ALPHAEARTH ALONE -----------------
+    # Stephen, 2026-09-27: "just get rid of the WSF for now ... see if we can
+    # find any change that isn't noise by filtering the AEF. We can bring it
+    # back in later". USE_WSF False skips the WSF read, and with it the model
+    # it teaches and the New construction mode (the code stays for later).
+    USE_WSF = False
+
+    # ---- KINDS OF CHANGE, from AlphaEarth alone (Stephen, 2026-09-27: "Alpha
+    # Earth alone, then let's try that") ------------------------------------
+    # The finer cells that moved most (the top KINDS_TOP of the view by how
+    # far their vector moved, first to last year read) are grouped by the
+    # DIRECTION they moved: each cell's change minus the change the whole
+    # view made (the embedding's own drift between years), normalized, then
+    # spherical k-means into KINDS_K kinds, the largest first. Ground that
+    # changed the same way lands in the same kind (fields turning over,
+    # water coming and going, land cleared for building), whatever WSF says.
+    # The groups are this view's: another view groups again.
+    KINDS_K = 6
+    KINDS_TOP = 0.25
 
     # the place under a click: the Overture divisions PMTiles answer at once in
     # the browser (locality, county, region); then the whole ladder, locality
@@ -371,10 +416,16 @@ def _(os, tempfile):
         HOLD_MS,
         HOLD_SLOP_PX,
         HOME,
+        KINDS_K,
+        KINDS_TOP,
         LABELS_SLOT,
         MAX_RES,
         MIN_RES,
         MOSAIC_MIN_RES,
+        HIST_MIN_RES,
+        HIST_RESTLESS,
+        NEW_HARD_Q,
+        NEW_HARD_W,
         NEW_L2,
         NEW_MAX_NEG,
         NEW_MAX_POS,
@@ -413,6 +464,7 @@ def _(os, tempfile):
         WSF_RES,
         WSF_X0,
         WSF_Y0,
+        USE_WSF,
         ZOOM0,
     )
 
@@ -1261,6 +1313,11 @@ def _(
 
 @app.cell
 def _(
+    HIST_RESTLESS,
+    KINDS_K,
+    KINDS_TOP,
+    NEW_HARD_Q,
+    NEW_HARD_W,
     NEW_L2,
     NEW_MAX_NEG,
     NEW_MAX_POS,
@@ -1299,21 +1356,22 @@ def _(
     # NEW CONSTRUCTION, taught by WSF in this view (see NEW_* in the constants).
     # Plain numpy: a logistic regression by Newton's method on 129 numbers
     # converges in a few steps on a few thousand examples.
-    def _logit_fit(X, y, l2, iters=30):
+    def _logit_fit(X, y, l2, sw=None, iters=30):
         w = np.zeros(X.shape[1])
+        sw = np.ones(len(y)) if sw is None else sw
         pen = np.full(X.shape[1], l2)
         pen[0] = 0.0  # the offset is not penalized
         for _ in range(iters):
             p = 1.0 / (1.0 + np.exp(-np.clip(X @ w, -30, 30)))
-            g = X.T @ (p - y) + pen * w
-            Hs = (X * (p * (1 - p))[:, None]).T @ X + np.diag(pen + 1e-9)
+            g = X.T @ (sw * (p - y)) + pen * w
+            Hs = (X * (sw * p * (1 - p))[:, None]).T @ X + np.diag(pen + 1e-9)
             dw = np.linalg.solve(Hs, g)
             w -= dw
             if np.abs(dw).max() < 1e-6:
                 break
         return w
 
-    def _new_model(Vf, Vl, wsf_c, wsf_n, y0, y1, keep=None, prefer_keep=False):
+    def _new_model(Vf, Vl, wsf_c, wsf_n, y0, y1, keep=None, prefer_keep=False, hard_w=NEW_HARD_W):
         """Per finer cell: the model's score (nan where AlphaEarth has no
         vector), WSF's new count in the window, a summary of the fit, and the
         fitted weights (None when `keep`, a model from a wider view, was used).
@@ -1349,37 +1407,128 @@ def _(
             return score, new, info, None
         rng = np.random.default_rng(len(ip) * 7919 + len(ineg))
         sp = rng.choice(ip, min(len(ip), NEW_MAX_POS), replace=False)
-        sn = rng.choice(ineg, min(len(ineg), NEW_MAX_NEG), replace=False)
-        rp, rn = len(sp) / len(ip), len(sn) / len(ineg)
+        # the negatives in two kinds: ground that moved as much as WSF's new
+        # places (hard) and the rest (quiet), half the draw from each
+        dm = 1.0 - np.einsum("ij,ij->i", Vf, Vl)
+        cut = float(np.quantile(dm[ip], NEW_HARD_Q))
+        hard = dm[ineg] >= cut
+        ih, iq = ineg[hard], ineg[~hard]
+        nh = min(len(ih), NEW_MAX_NEG // 2)
+        sh = rng.choice(ih, nh, replace=False)
+        sq = rng.choice(iq, min(len(iq), NEW_MAX_NEG - nh), replace=False)
+        info["hard"] = int(len(ih))
+        # each negative stands for its kind's share of the view, the hard
+        # ones hard_w times over; the negatives' weights sum to their count
+        mass = len(iq) + hard_w * len(ih)
+        wq = len(iq) / max(1, len(sq)) if len(sq) else 0.0
+        wh = hard_w * len(ih) / max(1, len(sh)) if len(sh) else 0.0
+        sn = np.r_[sh, sq]
+        wn = np.r_[np.full(len(sh), wh), np.full(len(sq), wq)]
+        wn *= len(sn) / max(wn.sum(), 1e-9)
+        rp, rn = len(sp) / len(ip), len(sn) / mass
         tp_, tn_ = rng.random(len(sp)) < 0.8, rng.random(len(sn)) < 0.8
         feats = lambda idx: np.hstack([np.ones((len(idx), 1)), Vf[idx], Vl[idx]]).astype(np.float64)
         Xtr = np.vstack([feats(sp[tp_]), feats(sn[tn_])])
         ytr = np.r_[np.ones(tp_.sum()), np.zeros(tn_.sum())]
-        w = _logit_fit(Xtr, ytr, NEW_L2)
-        # the fit saw the two kinds sampled at different rates: move the
-        # offset back to the view's own mix
+        w = _logit_fit(Xtr, ytr, NEW_L2, np.r_[np.ones(tp_.sum()), wn[tn_]])
+        # the fit saw the two classes sampled at different rates: move the
+        # offset back to the view's own mix (the hard ones counted hard_w times)
         w[0] -= np.log(rp / rn)
         score = _score(w)
-        # the held-out fifth, weighted back to the view's mix
-        hp, hn = sp[~tp_], sn[~tn_]
+        # the held-out fifth, weighted back to the view's mix (each hard one once)
+        hp, hn, hw = sp[~tp_], sn[~tn_], wn[~tn_] * mass / len(sn)
+        hw = np.where(np.isin(hn, sh), hw / hard_w, hw)
         if len(hp) and len(hn):
             tp = float((score[hp] >= NEW_P_MIN).sum()) / rp
-            fp = float((score[hn] >= NEW_P_MIN).sum()) / rn
+            fp = float(((score[hn] >= NEW_P_MIN) * hw).sum())
             info["recall"] = float((score[hp] >= NEW_P_MIN).mean())
             info["precision"] = tp / (tp + fp) if tp + fp > 0 else None
+            # of the ground that changed without WSF calling it new, how much
+            # the model still picks
+            hh = np.isin(hn, sh)
+            info["hard_picked"] = float((score[hn[hh]] >= NEW_P_MIN).mean()) if hh.any() else None
         info["ok"] = True
         return score, new, info, w
 
-    def build_frame(aef_by_year, wc, y0, y1, res, wsf=None, keep=None, prefer_keep=False):
+    # THE WHOLE HISTORY, per picked finer cell (see HIST_* in the constants).
+    # Its change year k splits the years into before and after; `mb` is the
+    # ground before (the mean of those years' vectors). The embeddings drift
+    # as a whole from year to year, so late years sit far from early ones
+    # everywhere: every test compares like with like. Steps are multiples of
+    # their year's median step in view (`hrel`), and "came back" asks
+    # whether the last year is closer to the ground before than to year k.
+    # Codes: 0 unknown, 1 one step that held, 2 came back, 3 changes this
+    # much most years, 4 kept moving, 5 too recent to tell (k is the last year).
+    HIST_KIND = {1: "held", 2: "came back", 3: "changes most years", 4: "kept moving", 5: "too recent"}
+
+    def _trajectory(Vs, hyears, hrel, idx, kyr):
+        m, T = len(idx), len(hyears)
+        yrs = np.array(hyears)
+        kyr = np.asarray(kyr)
+        kt = np.clip(np.searchsorted(yrs, kyr), 0, T - 1)
+        valid = (kyr > yrs[0]) & (yrs[kt] == kyr)
+        mb = np.zeros((m, 64), np.float32)
+        for y in hyears:
+            V = Vs[y][idx]
+            valid &= np.isfinite(V).all(1)
+            mb += np.where((y < kyr)[:, None], np.nan_to_num(V), 0.0)
+        mb /= np.maximum(np.linalg.norm(mb, axis=1), 1e-9)[:, None]
+        kc = np.clip(kt, 1, T - 1)
+        VL = np.nan_to_num(Vs[hyears[-1]][idx])
+        Vk = np.nan_to_num(np.stack([Vs[y][idx] for y in hyears], 0)[kc, np.arange(m)])
+        back = (1.0 - np.einsum("ij,ij->i", VL, mb)) < (1.0 - np.einsum("ij,ij->i", VL, Vk))
+        r = hrel[:, idx].T  # (m, T - 1): column t is the step into year t + 1
+        col = np.arange(T - 1)[None, :]
+        rk = r[np.arange(m), kc - 1]
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            noise = np.nanmedian(np.where(col == (kc - 1)[:, None], np.nan, r), 1)
+            after = np.nanmedian(np.where(col > (kc - 1)[:, None], r, np.nan), 1)
+        ratio = np.where(noise > 0, rk / noise, np.nan).astype(np.float32)
+        # kept moving: the years after k still step HIST_RESTLESS times the usual
+        growing = (after >= HIST_RESTLESS) & ((T - 1 - kc) >= 2)
+        code = np.select(
+            [~valid, kc == T - 1, ratio < HIST_RESTLESS, back, growing],
+            [0, 5, 3, 2, 4], 1).astype(np.uint8)
+        return code, ratio
+
+    # KINDS OF CHANGE (see KINDS_* in the constants): spherical k-means on
+    # unit change directions, k-means++ start, fit on a sample, every moved
+    # cell assigned to its nearest kind; kinds numbered largest first.
+    def _kinds(X, k, seed=0, iters=30, sample=20000):
+        rng = np.random.default_rng(seed)
+        S = X[rng.choice(len(X), min(len(X), sample), replace=False)]
+        C = [S[rng.integers(len(S))]]
+        for _ in range(1, k):
+            d = np.clip(1.0 - np.max(S @ np.array(C).T, 1), 0, None)
+            C.append(S[rng.choice(len(S), p=d / d.sum())] if d.sum() > 0 else S[rng.integers(len(S))])
+        C = np.array(C)
+        for _ in range(iters):
+            a = np.argmax(S @ C.T, 1)
+            Cn = np.stack([S[a == j].sum(0) if (a == j).any() else C[j] for j in range(k)])
+            Cn /= np.maximum(np.linalg.norm(Cn, axis=1), 1e-9)[:, None]
+            done = np.abs(Cn - C).max() < 1e-5
+            C = Cn
+            if done:
+                break
+        lab = np.argmax(X @ C.T, 1)
+        rank = np.empty(k, np.int64)
+        rank[np.argsort(-np.bincount(lab, minlength=k))] = np.arange(k)
+        return rank[lab]
+
+    def build_frame(aef_by_year, wc, y0, y1, res, wsf=None, keep=None, prefer_keep=False, hist=False):
         years = [y for y in range(y0, y1 + 1) if aef_by_year.get(y) is not None]
         if len(years) < 2:
             return None
-        for y in years:
+        # every year read when the whole history is asked for, the window's otherwise
+        hyears = sorted(y for y, t in aef_by_year.items() if t is not None) if hist else years
+        for y in hyears:
             con.register(f"aef_{y}", aef_by_year[y])
         sel = ["cell"]
-        for y in years:
+        for y in hyears:
             sel += [f"a{y}.{e} AS {e}_{y}" for e in _E]
-        joins = [f"LEFT JOIN aef_{y} a{y} USING (cell)" for y in years[1:]]
+        joins = [f"LEFT JOIN aef_{y} a{y} USING (cell)" for y in hyears if y != years[0]]
         j = con.execute(f"SELECT {', '.join(sel)} FROM aef_{years[0]} a{years[0]} {' '.join(joins)} ORDER BY cell").arrow().read_all()
         nfine = j.num_rows
 
@@ -1390,7 +1539,7 @@ def _(
             V[~np.isfinite(nrm) | (nrm == 0)] = np.nan
             return V
 
-        Vs = {y: _V(y) for y in years}
+        Vs = {y: _V(y) for y in hyears}
         step_years = list(zip(years[:-1], years[1:]))
         steps = np.stack([(1.0 - np.einsum("ij,ij->i", Vs[a], Vs[b])).astype(np.float32) for a, b in step_years], 0)
         disp = (1.0 - np.einsum("ij,ij->i", Vs[years[0]], Vs[years[-1]])).astype(np.float32)
@@ -1404,6 +1553,25 @@ def _(
         k = np.argmax(np.where(np.isnan(rel), -np.inf, rel), 0)
         yb = np.array([b for _, b in step_years], np.int64)
         big = np.where(has, yb[k], -2).astype(np.int64)
+        # kinds of change, per finer cell: 0 did not move enough to group
+        kind_f = np.zeros(nfine, np.uint8)
+        Vf_, Vl_ = Vs[years[0]], Vs[years[-1]]
+        okc = np.isfinite(disp) & np.isfinite(Vf_).all(1) & np.isfinite(Vl_).all(1)
+        if okc.sum() >= 50 * KINDS_K:
+            D = np.nan_to_num(Vl_ - Vf_)
+            D -= D[okc].mean(0)  # the change the whole view made
+            mv = np.flatnonzero(okc & (disp >= float(np.quantile(disp[okc], 1 - KINDS_TOP))))
+            X = D[mv] / np.maximum(np.linalg.norm(D[mv], axis=1), 1e-9)[:, None]
+            kind_f[mv] = _kinds(X, KINDS_K, seed=len(mv)) + 1
+        hist = hist and len(hyears) > len(years)
+        if hist:
+            hstep_years = list(zip(hyears[:-1], hyears[1:]))
+            hsteps = np.stack([(1.0 - np.einsum("ij,ij->i", Vs[a], Vs[b])).astype(np.float32) for a, b in hstep_years], 0)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                hmed = np.nanmedian(hsteps, axis=1)
+            hmed = np.where(np.isfinite(hmed) & (hmed > 0), hmed, np.nan).astype(np.float32)
+            hrel = hsteps / hmed[:, None]
 
         # WSF on the same finer cells, then the model
         fine = j["cell"].to_numpy().astype(np.uint64)
@@ -1418,6 +1586,8 @@ def _(
             wsf_n = np.where(m_, wsf["npx"].to_numpy(zero_copy_only=False).astype(np.float64)[ow][pos_], 0.0)
             wsf_c = np.where(m_[:, None], np.stack([wsf[f"c{k:02d}"].to_numpy(zero_copy_only=False).astype(np.float64)[ow][pos_] for k in range(1, WSF_NIDX + 1)], 1), 0.0)
         new_f, wsf_new_f, model, model_w = _new_model(Vs[years[0]], Vs[years[-1]], wsf_c, wsf_n, years[0], years[-1], keep, prefer_keep)
+        if wsf is None:
+            model = {"pos": 0, "neg": 0, "ok": False, "why": "WSF is off for now"}
         big_f = big
 
         # the peak: per hexagon, its finer cell with the biggest change
@@ -1430,6 +1600,7 @@ def _(
         n = len(cellid)
         nkids = np.diff(np.r_[np.flatnonzero(first), len(ps)]).astype(np.int32)
         disp, big, steps, rel = disp[pk], big[pk], steps[:, pk], rel[:, pk]
+        kind = kind_f[pk]
 
         # new construction per hexagon: its best-scoring finer cell (its
         # score and change year), and WSF over all of its finer cells
@@ -1445,7 +1616,29 @@ def _(
         byy = np.stack([wsf_c[:, wsf_idx_first(y) - 1:wsf_idx_first(y) + 1].sum(1) for y in wy], 1)
         byy_h = np.add.reduceat(byy[o], starts, axis=0) if n else np.zeros((0, len(wy)))
         wsf_year = np.where(byy_h.max(1) > 0, np.array(wy)[byy_h.argmax(1)], 0).astype(np.int64) if n else np.zeros(0, np.int64)
-        shown = np.nan_to_num(newp) >= NEW_P_MIN
+        # the whole history: each hexagon's change peak (for AEF Change) and
+        # its new-construction cell, judged around their own change year
+        ncode = np.zeros(n, np.uint8)
+        ccode = np.zeros(n, np.uint8)
+        nratio = np.full(n, np.nan, np.float32)
+        cratio = np.full(n, np.nan, np.float32)
+        if hist and n:
+            ccode, cratio = _trajectory(Vs, hyears, hrel, pk, big)
+            ncode, nratio = _trajectory(Vs, hyears, hrel, pk2, new_year)
+            hsteps_h, hrel_h = hsteps[:, pk], hrel[:, pk]
+            # the biggest step in the whole history, which may sit outside the window
+            hbig = np.where(np.isnan(hrel_h).all(0), -2, np.array([b for _, b in hstep_years])[np.argmax(np.nan_to_num(hrel_h, nan=-np.inf), 0)])
+        # the hexagon's biggest yearly step as a multiple of the usual step in
+        # view that year (the card)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            stand = np.nanmax(rel, axis=0) if rel.size else np.zeros(n, np.float32)
+        stand = np.where(np.isfinite(stand), stand, np.nan).astype(np.float32)
+        drop = np.isin(ncode, (2, 3))
+        picked_ = np.nan_to_num(newp) >= NEW_P_MIN
+        shown = picked_ & ~drop
+        model["dropped"] = int((picked_ & drop).sum())
+        model["hist"] = [int(hyears[0]), int(hyears[-1])] if hist else None
         model["shown"] = int(shown.sum())
         model["shown_no_wsf"] = int((shown & ~(np.nan_to_num(wsf_new) > 0)).sum())
 
@@ -1472,16 +1665,41 @@ def _(
         top = np.where(nwc > 0, share.argmax(1), -1)
         top_share = np.where(nwc > 0, share.max(1), 0.0)
 
+        # each kind in a line, to help name it: its hexagons, their most common
+        # change year, and the land cover (ESA WorldCover 2021) it has most
+        # more of than the view does. The biggest class alone says little:
+        # at Wuhan z10.5 every kind was mostly cropland, like the view, while
+        # bare ground ran 3 to 4 times the view's in two kinds, trees 1.7 in
+        # one, water 1.5 in another (2026-09-27)
+        kinds = []
+        hv = nwc > 0
+        vmean = share[hv].mean(0) if hv.any() else np.zeros(len(WC_CODES))
+        for kk in range(1, KINDS_K + 1):
+            m = kind == kk
+            yv = big[m][big[m] > 0]
+            q = {"n": int(m.sum()), "year": int(np.bincount(yv - 2000).argmax() + 2000) if len(yv) else None, "lc": None, "lift": None}
+            hw = m & hv
+            if hw.any():
+                ms = share[hw].mean(0)
+                lift = np.where((vmean >= 0.02) & (ms >= 0.05), ms / np.maximum(vmean, 1e-9), 0.0)
+                if lift.max() > 0:
+                    q["lc"], q["lift"] = _WC_NAME[WC_CODES[int(lift.argmax())]], float(lift.max())
+            kinds.append(q)
+
         cells = pa.table({
             "cell": pa.array(cellid),
             "disp": pa.array(disp),
             "level": pa.array(level),
             "big_year": pa.array(big.astype(np.int16)),
             "finer_cells": pa.array(nkids),
+            "stands_out": pa.array(stand),
+            "kind": pa.array(kind),
             "new_score": pa.array(newp),
             "new_year": pa.array(np.where(newp >= 0, new_year, -2).astype(np.int16)),
             "wsf_new_share": pa.array(wsf_new.astype(np.float32)),
             "wsf_year": pa.array(wsf_year.astype(np.int16)),
+            "new_history": pa.array([HIST_KIND.get(int(c_)) for c_ in ncode], pa.string()),
+            "change_history": pa.array([HIST_KIND.get(int(c_)) for c_ in ccode], pa.string()),
             **{f"step_{b}": pa.array(steps[i]) for i, (_, b) in enumerate(step_years)},
             **{f"rel_{b}": pa.array(rel[i]) for i, (_, b) in enumerate(step_years)},
             "landcover": pa.array([_WC_NAME[WC_CODES[t]] if t >= 0 else None for t in top]),
@@ -1493,13 +1711,20 @@ def _(
             "steps": steps, "rel": rel, "med": med, "step_years": step_years, "years": years, "y0": y0, "y1": y1,
             "shift_lo": lo, "shift_hi": hi, "share": share, "nwc": nwc, "top": top, "top_share": top_share,
             "newp": newp, "new_year": new_year, "wsf_new": wsf_new, "wsf_year": wsf_year, "wsf_npx": wsf_npx, "model": model, "model_w": model_w,
+            "stand": stand, "kind": kind, "kinds": kinds,
+            "hist": hist, "hyears": hyears, "ncode": ncode, "ccode": ccode, "nratio": nratio, "cratio": cratio,
+            "hsteps": hsteps_h if hist and n else None, "hrel": hrel_h if hist and n else None,
+            "hstep_years": hstep_years if hist else None, "hbig": hbig if hist and n else None,
             "score": f"AEF {years[0]} to {years[-1]}: {int(scored.sum()):,} of {n:,} cells scored, peak of {nfine:,} finer cells, median steps "
                      + ", ".join(f"{b} {m:.3f}" for (_, b), m in zip(step_years, med))
+                     + " | kinds of change: " + ", ".join(f"{j + 1}: {q['n']:,}" for j, q in enumerate(kinds))
                      + " | new construction: " + (
                          ("model from a wider view, " if model.get("reused") else "")
                          + f"taught by {model['pos']:,} WSF-new vs {model['neg']:,} unchanged finer cells, "
                          f"held out: finds {100 * model.get('recall', 0):.0f}% of WSF's new"
                          + (f", {100 * model['precision']:.0f}% of its picks WSF-new" if model.get("precision") is not None else "")
+                         + (f", picks {100 * model['hard_picked']:.1f}% of the {model['hard']:,} cells that changed without WSF calling them new" if model.get("hard_picked") is not None else "")
+                         + (f"; history {hyears[0]} to {hyears[-1]} leaves out {model['dropped']:,} that came back or change most years" if hist else "")
                          + f"; {model['shown']:,} hexagons shown, {model['shown_no_wsf']:,} with nothing new in WSF"
                          if model["ok"] else model["why"]),
         }
@@ -1597,7 +1822,17 @@ def _(anywidget, asyncio, time, traitlets):
         .seg-s button:hover{color:var(--text)}
         .seg-s button.on{background:var(--text);color:#fff}
         .seg-s.col{flex-direction:column;align-items:stretch}
-        .seg-s.col button{text-align:left}
+        .at-kinds{display:flex;flex-direction:column;gap:2px;width:100%}
+        .at-kinds button{display:flex;align-items:center;gap:7px;border:0;background:none;padding:2px 4px;border-radius:6px;cursor:pointer;text-align:left;color:var(--text);font-size:12.5px}
+        .at-kinds button:hover{background:var(--sel)}
+        .at-kinds button i{width:14px;height:14px;border-radius:3px;flex:none}
+        .at-kinds button span{color:var(--muted)}
+        .at-kinds button.off{opacity:.4}
+        .at-kinds button.off i{background:none!important;border:1.5px dashed var(--muted)}
+        .at-kind-dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+        .seg-s.col button{text-align:left;display:flex;align-items:center;justify-content:space-between;gap:14px}
+        .seg-s kbd{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 5px}
+        .seg-s button.on kbd{color:#fff;border-color:rgba(255,255,255,.45)}
         .at-row.top{align-items:flex-start}
         .at-row.top .at-lab{padding-top:5px}
         .at-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px -4px -2px 0}
@@ -1725,7 +1960,23 @@ def _(anywidget, asyncio, time, traitlets):
         // how much a hexagon moved, in words, from its 0..1 level in this view
         const howMuch = (t) => t >= 0.75 ? "a lot" : t >= 0.4 ? "a fair amount" : t >= 0.15 ? "a little" : "barely";
         const FAIR = 1 + Math.round(254 * 0.4);  // the level byte at "a fair amount"
-        const HB = 8;  // bytes per hexagon in hattrs
+        const HB = 12;  // bytes per hexagon in hattrs
+        // kinds of change, largest first: Okabe-Ito, made to stay apart for
+        // red-weak and other color vision; quiet ground (0) faint gray
+        const KIND_RGB = [[230, 159, 0], [86, 180, 233], [0, 158, 115], [240, 228, 66], [0, 114, 178], [204, 121, 167]];
+        const kindCss = (k) => `rgb(${KIND_RGB[(k - 1) % KIND_RGB.length].join(",")})`;
+        // the whole history, when read (zoomed in): codes from _trajectory.
+        // New construction leaves out 2 (came back) and 3 (changes most years)
+        const HIST_WORD = {1: "one step, then held", 2: "came back", 3: "changes this much most years", 4: "kept changing after", 5: "too recent to tell"};
+        const histDrop = (code) => code === 2 || code === 3;
+        function histText(code, k, hy, ratio) {
+          if (code === 1) return `One step into ${k}, then it held through ${hy[1]}.`;
+          if (code === 2) return `It changed into ${k}, then came back: by ${hy[1]} it is closer to the ground before than to ${k}. Fields, water and seasons do this; buildings rarely do.`;
+          if (code === 3) return `It changes about this much most years${ratio != null ? ` (this step is ${ratio.toFixed(1)} times its usual step, ${hy[0]} to ${hy[1]})` : ""}: ground that turns over, like a field.`;
+          if (code === 4) return `It kept changing after ${k}, more than the usual step most years, the way a site still building out, a quarry or a mine does.`;
+          if (code === 5) return `The change is into ${hy[1]}, the last year AlphaEarth has: too recent to tell whether it holds.`;
+          return "";
+        }
 
         function render({model, el}) {
           let cfg = {};
@@ -1741,17 +1992,17 @@ def _(anywidget, asyncio, time, traitlets):
           const VIR = (cfg.viridis || "440154fde725").match(/.{6}/g).map((h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)));
           const vir = (t) => { t = Math.max(0, Math.min(1, t)) * (VIR.length - 1); const i = Math.min(VIR.length - 2, Math.floor(t)), f = t - i; return VIR[i].map((v, j) => Math.round(v + (VIR[i + 1][j] - v) * f)); };
           const virCss = (n) => Array.from({length: n}, (_, i) => `rgb(${vir(i / (n - 1)).join(",")})`).join(",");
-          // the year of the biggest change: YlOrBr less its near-white end, light
-          // yellow for the first year to dark brown for the last (Stephen,
-          // 2026-09-25: "use ylorbr for year changed"); a lightness ramp on the
-          // orange leg, readable without red, and apart from how-much's viridis
-          const YOB = ["fee391", "fec44f", "fe9929", "ec7014", "cc4c02", "993404", "662506"].map((h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)));
-          const yob = (t) => { t = Math.max(0, Math.min(1, t)) * (YOB.length - 1); const i = Math.min(YOB.length - 2, Math.floor(t)), f = t - i; return YOB[i].map((v, j) => Math.round(v + (YOB[i + 1][j] - v) * f)); };
-          const yobCss = (n) => Array.from({length: n}, (_, i) => `rgb(${yob(i / (n - 1)).join(",")})`).join(",");
+          // the year new construction changed: ColorBrewer Oranges less its near-white
+          // end and its red-brown last step, light orange for the first year to burnt
+          // orange for the last (Stephen, 2026-09-27: "it should be warm"); a lightness ramp
+          // on the orange leg, readable without red
+          const ORA = ["fdd0a2", "fdae6b", "fd8d3c", "f16913", "d94801", "a63603"].map((h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16)));
+          const ora = (t) => { t = Math.max(0, Math.min(1, t)) * (ORA.length - 1); const i = Math.min(ORA.length - 2, Math.floor(t)), f = t - i; return ORA[i].map((v, j) => Math.round(v + (ORA[i + 1][j] - v) * f)); };
+          const oraCss = (n) => Array.from({length: n}, (_, i) => `rgb(${ora(i / (n - 1)).join(",")})`).join(",");
           const A_FILL = cfg.alpha_fill || 235, A_QUIET = cfg.alpha_quiet || 70;
           const HEXZ = cfg.hex_zoom || 9, HOLD_MS = cfg.hold_ms || 200, SLOP = cfg.hold_slop || 5;
           const st = {
-            gmode: "new", y0: cfg.aef_from || 2022, y1: cfg.aef_to || 2025,
+            gmode: cfg.use_wsf ? "new" : "kinds", hideKinds: new Set(), y0: cfg.aef_from || 2022, y1: cfg.aef_to || 2025,
             imgYear: cfg.s2_year || S2Y[S2Y.length - 1], labels: true, s2scale: Number(cfg.s2_scale) || 1,
             fit: !!cfg.fit, holding: false,
           };
@@ -1785,15 +2036,15 @@ def _(anywidget, asyncio, time, traitlets):
           const rowOf = (label) => { const r = el_("div", "at-row"); if (label) r.appendChild(el_("span", "at-lab", label)); panel.appendChild(r); return r; };
           const segOf = (row, items, isOn, onClick) => {
             const seg = el_("div", "seg-s col");
-            const bs = items.map(([k, label, title]) => { const b = el_("button", "", label); b.title = title || ""; b.onclick = () => onClick(k); seg.appendChild(b); return b; });
+            const bs = items.map(([k, label, title, key]) => { const b = el_("button", "", label); b.title = title ? title + (key ? " (" + key + ")" : "") : ""; if (key) b.appendChild(el_("kbd", "", key)); b.onclick = () => onClick(k); seg.appendChild(b); return b; });
             row.appendChild(seg);
             return () => items.forEach(([k], i) => bs[i].classList.toggle("on", isOn(k)));
           };
           const rFill = rowOf("Color by");
           rFill.classList.add("top");
-          const styleFill = segOf(rFill, [["new", "New construction", "only the hexagons that look like the places WSF saw built in this view, colored by the year they changed (N)"],
-                                          ["much", "AEF Change", "how far the ground's AlphaEarth numbers moved between the first and last year read (S)"],
-                                          ["year", "AEF Change Year", "the year each hexagon's change stood out most against the usual change that year, faded where the ground barely moved (D)"]],
+          const styleFill = segOf(rFill, [cfg.use_wsf ? ["new", "New construction", "only the hexagons that look like the places WSF saw built in this view, colored by the year they changed", "A"]
+                                            : ["kinds", "Kinds of change", "the ground that moved most, grouped by the way it moved: the same color changed the same way. Click a kind in the key to hide or show it", "A"],
+                                          ["much", "AEF Change", "how far the ground's AlphaEarth numbers moved between the first and last year read", "S"]],
                                   (k) => k === st.gmode, (k) => { st.gmode = k; recolorHex(); styleRows(); renderYear(); update(); });
           const rKey = rowOf("");
           rKey.classList.add("keep");
@@ -1833,7 +2084,7 @@ def _(anywidget, asyncio, time, traitlets):
             const y0 = hmeta.y0 || st.y0, y1 = hmeta.y1 || st.y1;
             const out_ = map && map.getZoom() < HEXZ;
             // the title is what is drawn, open or folded (Stephen, 2026-09-25)
-            panelHd.querySelector(".t").textContent = st.gmode === "new" ? "New construction" : st.gmode === "year" ? "AEF Change Year" : "AEF Change";
+            panelHd.querySelector(".t").textContent = st.gmode === "new" ? "New construction" : st.gmode === "kinds" ? "Kinds of change" : "AEF Change";
             // no hexagons zoomed out, so nothing to color (Stephen, 2026-09-25)
             rFill.style.display = out_ ? "none" : "";
             if (out_) {
@@ -1841,12 +2092,22 @@ def _(anywidget, asyncio, time, traitlets):
               return;
             }
             const m_ = hmeta.model;
+            if (st.gmode === "kinds") {
+              const ks = hmeta.kinds || [];
+              let h = `<div class="at-kinds">`;
+              ks.forEach((q, j) => {
+                const k = j + 1, off = st.hideKinds.has(k);
+                h += `<button data-kind="${k}" class="${off ? "off" : ""}" title="${off ? "show" : "hide"} kind ${k}"><i style="background:${kindCss(k)}"></i><b>${k}</b><span>${fmt(q.n)}${q.year ? `, most ${q.year}` : ""}${q.lc ? `, ${esc(q.lc)} ${q.lift.toFixed(1)}×` : ""}</span></button>`;
+              });
+              h += `</div><span class="why">The ground that moved most from ${y0} to ${y1}, grouped by the way it moved: one color, one way of changing. Beside each: hexagons, the most common year, and the land cover it has most more of than the view. Click one to hide it.</span>`;
+              keyEl.innerHTML = h;
+              keyEl.querySelectorAll("[data-kind]").forEach((b) => { b.onclick = (e) => { e.stopPropagation(); const k = +b.dataset.kind; st.hideKinds.has(k) ? st.hideKinds.delete(k) : st.hideKinds.add(k); recolorHex(); renderYear(); styleKey(); update(); }; });
+              return;
+            }
             keyEl.innerHTML = st.gmode === "new"
               ? (m_ && !m_.ok ? `<span class="why">${esc(m_.why || "nothing to learn from here")}</span>`
-                : `${y0 + 1} <i class="at-ramp" style="background:linear-gradient(90deg,${yobCss(8)})"></i> ${y1}` + `<span class="why">Fainter where less sure.` + (m_ && m_.ok ? ` Taught by ${fmt(m_.pos)} places WSF saw built${m_.reused ? " in the wider view" : ""}: ${fmt(m_.shown)} hexagons shown, ${fmt(m_.shown_no_wsf)} of them with nothing new in WSF.` : "") + `</span>`)
-              : st.gmode === "much"
-              ? `barely <i class="at-ramp" style="background:linear-gradient(90deg,${virCss(8)})"></i> a lot, ${y0} to ${y1}`
-              : `${y0 + 1} <i class="at-ramp" style="background:linear-gradient(90deg,${yobCss(8)})"></i> ${y1}, faded where it barely moved`;
+                : `${y0 + 1} <i class="at-ramp" style="background:linear-gradient(90deg,${oraCss(8)})"></i> ${y1}` + `<span class="why">Fainter where less sure.` + (m_ && m_.ok ? ` Taught by ${fmt(m_.pos)} places WSF saw built${m_.reused ? " in the wider view" : ""}: ${fmt(m_.shown)} hexagons shown, ${fmt(m_.shown_no_wsf)} of them with nothing new in WSF.` + (m_.hist ? ` Every year from ${m_.hist[0]} to ${m_.hist[1]} read: ${fmt(m_.dropped || 0)} left out that came back or change this much most years.` : hmeta.hist_pending ? " Reading the other years for the whole history…" : "") : "") + `</span>`)
+              : `barely <i class="at-ramp" style="background:linear-gradient(90deg,${virCss(8)})"></i> a lot, ${y0} to ${y1}`;
           }
           function styleRows() { styleFill(); styleWin(); styleKey(); }
           top.append(search, panel);
@@ -1882,11 +2143,11 @@ def _(anywidget, asyncio, time, traitlets):
           const about = el_("div", "at-about");
           about.innerHTML = `<div class="box at-glass">
             <h2>Where the ground changed</h2>
-            <p><b>New construction</b> (the default, N): in every view, the places the <b>World Settlement Footprint</b> saw built inside the years read are the examples. A small model learns what they look like in AlphaEarth (the first and last year) and scores every hexagon; only the ones that look like new construction are drawn, colored by the year they changed, fainter the less sure. Some of them WSF never recorded: click one to see what WSF says there.</p>
-            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. In AEF Change, the hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Switch to <b>AEF Change Year</b> to color each hexagon by the year its change stood out most, light yellow for the first year to dark brown for the last. Each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all). Hexagons fade where they barely moved.</p>
+            <p><b>New construction</b> (the default, A): in every view, the places the <b>World Settlement Footprint</b> saw built inside the years read are the examples, against ground that changed without being built. A small model learns what they look like in AlphaEarth (the first and last year) and scores every hexagon; only the ones that look like new construction are drawn, colored by the year they changed, fainter the less sure. Some of them WSF never recorded: click one to see what WSF says there. Zoomed in past 13, every year from 2017 is read after the hexagons are up: the card says whether a change held, came back, changes most years or kept changing, and the ones that came back or change most years are left out.</p>
+            <p><b>AlphaEarth</b> describes every 10 m of ground with 64 numbers a year, 2017 to 2025. In AEF Change, the hexagons show how far those numbers moved between the first and last year read, in viridis, stretched to what is in view: yellow moved most. Hexagons fade where they barely moved. Click one for the year its change stood out most: each year is judged against the usual change that year in view, because the embeddings shift as a whole between some years (2024 to 2025 most of all).</p>
             <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: move it off what you want to see, drag the map to look around, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
             <p><b>Click</b> a hexagon for its account: each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. WorldCover is one map of one year, so it says what a place is, not when it changed.</p>
-            <p><small>Keys: hold space for the imagery, scroll for its year; N New construction, S AEF Change, D AEF Change Year; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search (a place, or paste an H3 string); Esc close.</small></p>
+            <p><small>Keys: hold space for the imagery, scroll for its year; A New construction, S AEF Change; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; X fill the window; / search (a place, or paste an H3 string); Esc close.</small></p>
             <p><small>WSF Tracker &copy; DLR and MindEarth, via Source Cooperative (mindearth/wsf), CC BY 3.0 IGO. AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions, &copy;&nbsp;OpenStreetMap contributors, Overture Maps Foundation (ODbL), with geoBoundaries, Esri Community Maps contributors and LINZ (CC BY 4.0): the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
           pane.appendChild(about);
@@ -1953,23 +2214,28 @@ def _(anywidget, asyncio, time, traitlets):
             const y0 = hmeta.y0 || st.y0, y1 = hmeta.y1 || st.y1, span = Math.max(1, y1 - y0 - 1);
             const pmin = 1 + Math.round(254 * (hmeta.p_min ?? 0.5));
             for (let i = 0; i < N; i++) {
-              const a8 = HB * i, o = 4 * i, yc_ = hattrs[a8], lv = hattrs[a8 + 1];
+              const a8 = HB * i, o = 4 * i, lv = hattrs[a8 + 1];
               let col, a;
               if (st.gmode === "new") {
                 // only what looks like new construction; the rest fully clear.
                 // Colored by its change year, fainter the closer to the cut
                 const nb = hattrs[a8 + 4], ny = hattrs[a8 + 5];
-                if (nb < pmin) continue;
+                if (nb < pmin || histDrop(hattrs[a8 + 8])) continue;
                 const t = (nb - pmin) / Math.max(1, 255 - pmin);
-                col = yob(ny && y1 - y0 > 1 ? (2000 + ny - (y0 + 1)) / span : 1);
+                col = ora(ny && y1 - y0 > 1 ? (2000 + ny - (y0 + 1)) / span : 1);
                 a = Math.round(120 + (A_FILL - 120) * t);
+              } else if (st.gmode === "kinds") {
+                // its kind's color, fuller the more it moved; quiet ground faint gray
+                if (!lv) continue;
+                const kd = hattrs[a8 + 11], t = (lv - 1) / 254;
+                if (!kd) { col = [150, 156, 162]; a = 40; }
+                else if (st.hideKinds.has(kd)) continue;
+                else { col = KIND_RGB[(kd - 1) % KIND_RGB.length]; a = Math.round(110 + (A_FILL - 110) * t); }
               } else {
                 if (!lv) continue;
                 const t = (lv - 1) / 254;
                 // quiet ground faint, change in full ink (Stephen, 2026-09-25)
-                if (st.gmode === "much") { col = vir(t); a = Math.round(A_QUIET + (A_FILL - A_QUIET) * t); }
-                else if (yc_) { col = yob(y1 - y0 > 1 ? (2000 + yc_ - (y0 + 1)) / span : 1); a = Math.round(A_QUIET + (A_FILL - A_QUIET) * t); }
-                else continue;
+                col = vir(t); a = Math.round(A_QUIET + (A_FILL - A_QUIET) * t);
               }
               hcol[o] = col[0]; hcol[o + 1] = col[1]; hcol[o + 2] = col[2]; hcol[o + 3] = a;
             }
@@ -1987,7 +2253,15 @@ def _(anywidget, asyncio, time, traitlets):
                 ? `<b>Looks like new construction</b>${ny ? `, ${2000 + ny}` : ""} (score ${((nb - 1) / 254).toFixed(2)})`
                 : `<b>Not new construction</b> (score ${((nb - 1) / 254).toFixed(2)})`;
               s += `<br>${wb ? `WSF: ${Math.max(1, Math.round(100 * wb / 255))}% newly built${wy ? `, most in ${2000 + wy}` : ""}` : "WSF: nothing new here"}`;
-            } else s = `<b>Changed ${howMuch((lv - 1) / 254)}</b>${yb ? `, most in ${2000 + yb}` : ""}`;
+              if (hattrs[o + 8]) s += `<br>History: ${HIST_WORD[hattrs[o + 8]]}${histDrop(hattrs[o + 8]) && nb >= pmin ? ", so not drawn" : ""}`;
+            } else if (st.gmode === "kinds") {
+              const kd = hattrs[o + 11];
+              s = kd ? `<b>Kind ${kd}</b>, changed ${howMuch((lv - 1) / 254)}${yb ? `, most in ${2000 + yb}` : ""}` : `<b>Not grouped</b>: changed ${howMuch((lv - 1) / 254)}, less than the ground that moved most`;
+              if (hattrs[o + 9]) s += `<br>History: ${HIST_WORD[hattrs[o + 9]]}`;
+            } else {
+              s = `<b>Changed ${howMuch((lv - 1) / 254)}</b>${yb ? `, most in ${2000 + yb}` : ""}`;
+              if (hattrs[o + 9]) s += `<br>History: ${HIST_WORD[hattrs[o + 9]]}`;
+            }
             const names = hmeta.classes || [];
             if (lc && names[lc - 1]) s += `<br>${cap(names[lc - 1])}, ${Math.round(100 * sh / 255)}% of it`;
             return s;
@@ -2007,7 +2281,8 @@ def _(anywidget, asyncio, time, traitlets):
             if (hattrs) for (let i = 0; i < N; i++) {
               const o = HB * i, lv = hattrs[o + 1];
               if (lv) total++;
-              if (st.gmode === "new") { const ny = hattrs[o + 5]; if (ny && hattrs[o + 4] >= pmin && out[2000 + ny] != null) out[2000 + ny]++; }
+              if (st.gmode === "new") { const ny = hattrs[o + 5]; if (ny && hattrs[o + 4] >= pmin && !histDrop(hattrs[o + 8]) && out[2000 + ny] != null) out[2000 + ny]++; }
+              else if (st.gmode === "kinds") { const yb = hattrs[o], kd = hattrs[o + 11]; if (yb && kd && !st.hideKinds.has(kd) && out[2000 + yb] != null) out[2000 + yb]++; }
               else { const yb = hattrs[o]; if (yb && lv >= FAIR && out[2000 + yb] != null) out[2000 + yb]++; }
             }
             return {years: out, dated, total};
@@ -2050,7 +2325,7 @@ def _(anywidget, asyncio, time, traitlets):
                 if (h > 0.5) s += `<path d="M${x},${base} v${-(h - r)} q0,${-r} ${r},${-r} h${bw - 2 * r} q${r},0 ${r},${r} v${h - r} z" fill="${rgba(INK, y === big ? 0.9 : 0.28)}"/>`;
               }
               s += `<rect x="${x - gap / 2}" y="0" width="${bw + gap}" height="${H}" fill="transparent" data-tip="${y - 1} to ${y}: ${v == null ? "no data" : `${v.toFixed(1)} times the usual step here that year (${steps[i].toFixed(3)})`}"/>`;
-              s += `<text x="${x + bw / 2}" y="${H - 4}" text-anchor="middle"${y === big ? ' class="lbl"' : ""}>’${String(y - 1).slice(-2)} to ’${String(y).slice(-2)}</text>`;
+              s += `<text x="${x + bw / 2}" y="${H - 4}" text-anchor="middle"${y === big ? ' class="lbl"' : ""}>${n > 5 ? `’${String(y).slice(-2)}` : `’${String(y - 1).slice(-2)} to ’${String(y).slice(-2)}`}</text>`;
             });
             const ty = yOf(1); s += `<line x1="0" x2="${W}" y1="${ty}" y2="${ty}" stroke="rgba(24,32,40,.55)" stroke-dasharray="3 3"/><text x="${W}" y="${ty - 3}" text-anchor="end">usual step here</text>`;
             s += `<line x1="0" x2="${W}" y1="${base + 0.5}" y2="${base + 0.5}" stroke="rgba(24,32,40,.25)"/></svg>`;
@@ -2070,15 +2345,20 @@ def _(anywidget, asyncio, time, traitlets):
               if (lat_lon) h += `<code title="lat, long of the cell's center">${lat_lon}</code><button data-copy="${lat_lon}">copy</button>`;
               h += `</div>`;
             }
-            if (c.model_ok === false) h += `<h4>New construction</h4><p class="sub">${esc(c.model_why || "Nothing to learn from in this view.")}</p>`;
+            if (!c.use_wsf) {}
+            else if (c.model_ok === false) h += `<h4>New construction</h4><p class="sub">${esc(c.model_why || "Nothing to learn from in this view.")}</p>`;
             else if (c.new != null) {
               const yes = c.new >= c.p_min, wsfNew = c.wsf_new != null && c.wsf_new > 0;
               h += `<h4>New construction</h4><p>${yes ? `<b>Looks like new construction</b>${c.new_year > 0 ? `, changing most between the ${c.new_year - 1} and ${c.new_year} pictures` : ""}.` : `<b>Does not look like new construction.</b>`} Score ${c.new.toFixed(2)}, against a cut of ${c.p_min}.</p>`;
+              if (c.hist && c.ncode) h += `<p class="sub">${histDrop(c.ncode) && yes ? "<b>Not drawn:</b> " : ""}${histText(c.ncode, c.new_year, c.hist, c.nratio)}</p>`;
               h += `<p class="sub">${c.wsf_npx ? (wsfNew ? `WSF: ${Math.max(1, Math.round(100 * c.wsf_new))}% of it newly built from ${c.y0 + 1} to ${c.y1}${c.wsf_year > 0 ? `, most in ${c.wsf_year}` : ""}.` : `WSF: nothing newly built here from ${c.y0 + 1} to ${c.y1}.${yes ? " A place WSF did not record." : ""}`) : "WSF has no record here."}</p>`;
             }
             if (c.level == null) h += `<p>No AlphaEarth data here.</p>`;
             else {
-              h += `<p>AlphaEarth: the ground changed <b>${howMuch(c.level)}</b> from ${c.y0} to ${c.y1}, compared with the rest of the view. Its year-to-year change stood out most between the <b>${c.big - 1} and ${c.big}</b> pictures.</p>`;
+              h += `<p>AlphaEarth: the ground changed <b>${howMuch(c.level)}</b> from ${c.y0} to ${c.y1}, compared with the rest of the view. Its year-to-year change stood out most between the <b>${c.big - 1} and ${c.big}</b> pictures${c.stand != null ? `, ${c.stand.toFixed(1)} times the usual step in view that year` : ""}.</p>`;
+              if (c.kind) { const q = (c.kinds || [])[c.kind - 1] || {}; h += `<p class="sub"><i class="at-kind-dot" style="background:${kindCss(c.kind)}"></i><b>Kind ${c.kind}</b> of ${(c.kinds || []).length}: changed the way ${fmt(q.n || 0)} hexagons in view did${q.lc ? `, where ${esc(q.lc)} is ${q.lift.toFixed(1)} times the view's share` : ""}.</p>`; }
+              else if (c.level != null) h += `<p class="sub">Not in a kind: it moved less than the quarter of the view that moved most.</p>`;
+              if (c.hist && c.ccode) h += `<p class="sub">${histText(c.ccode, c.big, c.hist, c.cratio)}${c.hbig > 0 && (c.hbig <= c.y0 || c.hbig > c.y1) ? ` Its biggest step from ${c.hist[0]} to ${c.hist[1]} was into ${c.hbig}, outside the years read.` : ""}</p>`;
               h += stepBars(c.rel, c.steps, c.step_years, c.big);
               if (S2Y.includes(c.big) && S2Y.includes(c.big - 1)) h += `<p class="sub">Hold space with the pointer near it and scroll between ${c.big - 1} and ${c.big} to see what happened.</p>`;
               else if (c.big) h += `<p class="sub">The imagery starts in ${S2Y[0]}, so there is no picture from before ${c.big} to compare.</p>`;
@@ -2103,6 +2383,8 @@ def _(anywidget, asyncio, time, traitlets):
             if (N && hattrs) {
               h += st.gmode === "new"
                 ? `<h4>New construction, by year</h4><p class="sub">Hexagons in view that look like new construction, by the year their change stood out most</p>`
+                : st.gmode === "kinds"
+                ? `<h4>Kinds of change, by year</h4><p class="sub">Hexagons in the kinds shown, by the year their change stood out most</p>`
                 : `<h4>Where it changed, by year</h4><p class="sub">Hexagons in view that changed a fair amount or more, by the year their change stood out most</p>`;
               h += yearBars(c);
             } else h += `<p class="sub" style="margin-top:12px">${map && map.getZoom() < HEXZ ? `Zoom in to ${HEXZ} for the hexagons.` : "Reading AlphaEarth for this view…"}</p>`;
@@ -2506,7 +2788,7 @@ def _(anywidget, asyncio, time, traitlets):
             if (tgt && /^(INPUT|SELECT|TEXTAREA)$/.test(tgt.tagName)) return;
             const k = e.key, lo = st.y0, hi = st.y1;
             if (k === " ") { if (!e.repeat) spaceDown(); }
-            else if (/^[sSdDnN]$/.test(k)) { const m = (k === "s" || k === "S") ? "much" : (k === "n" || k === "N") ? "new" : "year"; if (m !== st.gmode) { st.gmode = m; recolorHex(); styleRows(); renderYear(); update(); } }
+            else if (/^[aAsS]$/.test(k)) { const m = (k === "s" || k === "S") ? "much" : cfg.use_wsf ? "new" : "kinds"; if (m !== st.gmode) { st.gmode = m; recolorHex(); styleRows(); renderYear(); update(); } }
             else if (k === "[" || k === "]") stepImg(k === "]" ? 1 : -1);
             else if (k === ";" || k === "'") { st.s2scale = Math.round(10 * Math.max(0.3, Math.min(2.5, st.s2scale + (k === "'" ? 0.1 : -0.1)))) / 10; gam.value = st.s2scale; clearTimeout(gamT); gamT = setTimeout(() => send("s2scale"), 250); }
             else if (k === "-" || k === "=") { const v = Math.max(aefYears[0], Math.min(hi - 1, lo + (k === "=" ? 1 : -1))); if (v !== lo) { st.y0 = v; winSent = [st.y0, st.y1]; styleWin(); send("aef"); } }
@@ -2585,7 +2867,10 @@ def _(anywidget, asyncio, time, traitlets):
           const loadHex = () => {
             const tl = performance.now();
             const cb = bytesOf(model.get("cells")), ab = bytesOf(model.get("hattrs"));
+            const seq0 = hmeta.seq;
             try { hmeta = JSON.parse(model.get("hmeta") || "{}"); } catch (e) { hmeta = {}; }
+            // the kinds are grouped again for every new frame: what was hidden no longer means the same
+            if (hmeta.seq !== seq0) st.hideKinds.clear();
             if (!cb || !cb.length) { hexes = []; N = 0; hexIndex = new Map(); res = -1; hattrs = null; hcol = null; hcol32 = null; renderYear(); styleKey(); update(); return; }
             const ids = new BigUint64Array(copyOf(cb));
             N = ids.length; hexes = new Array(N); hexIndex = new Map();
@@ -2620,7 +2905,7 @@ def _(mo):
     mo.md("""
     ## How it works
 
-    **New construction, taught by WSF.** The World Settlement Footprint
+    **New construction (Oranges, `A`), taught by WSF.** The World Settlement Footprint
     tracker (DLR and MindEarth) dates, every half year from mid-2016 to
     the end of 2025, when each 10 m pixel first read as built-up. For the
     view on screen it is read on a stride and folded to the same finer H3
@@ -2632,7 +2917,14 @@ def _(mo):
     first- and last-year AlphaEarth vectors (128 numbers and an offset,
     fit with numpy by Newton's method) learns the difference, on up to
     6,000 new and 24,000 unchanged cells, with the odds corrected back to
-    the view's own mix. It then scores every finer cell, WSF's or not, and
+    the view's own mix. Half of the unchanged cells are drawn from ground
+    that moved in AlphaEarth at least as much as the lower quarter of WSF's
+    new places (fields that turned over, roads, cleared land, water), and
+    each of those counts twice its share of the view: the model is taught
+    built against other change, not change against quiet ground. At Wuhan
+    (2021 to 2025, zoom 10.5) that took its picks of such ground from 1.1%
+    to 0.8% and the share of its picks WSF calls new from 87% to 90%, and
+    it finds 52% of WSF's new places instead of 57%. It then scores every finer cell, WSF's or not, and
     each hexagon takes its best-scoring one. Hexagons scoring 0.5 or more
     are drawn, in the year palette below by that cell's change year. A
     fifth of the examples is held out, and the status line says how many of
@@ -2647,6 +2939,26 @@ def _(mo):
     The picks WSF did not record are the point: construction WSF missed,
     or ground that changed the way construction does (cleared, graded,
     paved). Holding space shows the imagery to tell which.
+
+    **The whole history, zoomed in.** From about zoom 13.2 (the hexagons at
+    res 11, where the full mosaic is read and a view is small) every
+    AlphaEarth year, 2017 to 2025, is read, whatever the window. The
+    window's hexagons come first as usual; the other years are read in the
+    background and the same hexagons are updated when they arrive, so
+    nothing waits on them. Each
+    hexagon's change year splits its years into before and after, and the
+    card says what the ground did around it: one step that held, came back
+    (by the last year it is closer to the ground before than to the change
+    year), changes this much most years (the step is under twice the
+    cell's own median step), kept changing after (the steps after it stay
+    at twice the usual), or too recent to tell. Steps are multiples of
+    their year's median step in view, since the embeddings drift as a whole
+    from year to year. New construction leaves out the hexagons that came
+    back or change this much most years; the key counts them. AEF Change
+    stays raw. Kept changing is common on WSF's own new places (sites build
+    out over years), so it describes and does not filter. Reading nine
+    years instead of five took a view at zoom 13.5 from about 10 s to 17 s
+    when it was read up front.
 
     **AlphaEarth, folded to H3.** Every 10 m pixel of the AlphaEarth
     Foundations embedding is 64 numbers describing the ground for one year.
@@ -2680,8 +2992,8 @@ def _(mo):
     which each pixel names the hexagons near it. The shader draws each
     hexagon's edge from its H3 boundary (h3-js), covering a fragment by its
     distance to the edge over one screen pixel, so edges stay smooth at any
-    zoom. Colors come from a small table, so switching between AEF Change
-    and AEF Change Year recolors without new tiles. Hover and click look
+    zoom. Colors come from a small table, so switching between New
+    construction and AEF Change recolors without new tiles. Hover and click look
     the hexagon up from the pointer with h3-js. The browser draws images,
     however many hexagons there are.
 
@@ -2693,7 +3005,7 @@ def _(mo):
     hexagons against their neighbors, not against the world. Hexagons
     that barely moved are drawn faint.
 
-    **AEF Change Year (YlOrBr, `D`).** Every year-to-year step is scored
+    **The change year (on the card).** Every year-to-year step is scored
     the same way. The embeddings drift as a whole between some years (over
     Lagos the 2024 to 2025 median step is about twice the others), so the
     raw biggest step would land on 2025 almost everywhere. Each step is
@@ -2735,6 +3047,7 @@ def _(
     S2_YEAR0,
     S2_YEARS,
     VIEW_H,
+    USE_WSF,
     VIRIDIS,
     WC_CLASSES,
     json,
@@ -2752,7 +3065,7 @@ def _(
         "s2_year": S2_YEAR0, "s2_scale": S2_SCALE0, "s2_gen": 0, "s2_years": list(S2_YEARS), "s2_min_z": S2_TILE_MIN_Z,
         "aef_from": AEF_FROM0, "aef_to": AEF_TO0, "aef_years": list(AEF_YEARS_ALL),
         "hex_zoom": HEX_ZOOM, "div_pm": OV_DIV_PM, "fit": _fit, "hold_ms": HOLD_MS, "hold_slop": HOLD_SLOP_PX,
-        "viridis": VIRIDIS, "alpha_fill": ALPHA_FILL, "alpha_quiet": ALPHA_QUIET,
+        "viridis": VIRIDIS, "alpha_fill": ALPHA_FILL, "alpha_quiet": ALPHA_QUIET, "use_wsf": USE_WSF,
     }))
     HOLD = {
         "frame": None, "sent": None, "box": None, "res": None, "vs": None,
@@ -2773,6 +3086,7 @@ def _(
     HEX_TILE_PX,
     HEX_UP,
     HEX_ZOOM,
+    HIST_MIN_RES,
     HOLD,
     HOME,
     NEW_P_MIN,
@@ -2797,6 +3111,7 @@ def _(
     s2_tile_png,
     time,
     traceback,
+    USE_WSF,
     view_to_bbox,
     wc_fold,
     wsf_fold,
@@ -2808,6 +3123,8 @@ def _(
     except RuntimeError:
         pass
     HOLD["runs"] += 1
+    # one frame build at a time: they share the DuckDB connection's registered tables
+    HOLD.setdefault("build_lock", asyncio.Lock())
     _WC_NAME = dict(WC_CLASSES)
 
     def _hex_tile(fr, z, x, y):
@@ -2907,16 +3224,73 @@ def _(
         wn_ = np.nan_to_num(fr["wsf_new"])
         wb = np.where(wn_ > 0, np.maximum(1, np.round(255 * np.clip(wn_, 0, 1))), 0).astype(np.uint8)
         wy = np.where(fr["wsf_year"] > 0, fr["wsf_year"] - 2000, 0).astype(np.uint8)
+        # the whole history, when read: the new-construction cell's and the
+        # change peak's codes (0 not read, see _trajectory)
+        nh, ch = fr["ncode"].astype(np.uint8), fr["ccode"].astype(np.uint8)
+        # the biggest yearly step as a multiple of the usual, in tenths (0 none)
+        sb = np.round(10 * np.clip(np.nan_to_num(fr["stand"]), 0, 25.5)).astype(np.uint8)
         with cmap.hold_sync():
             cmap.cells = fr["cellid"].astype("<u8").tobytes()
-            cmap.hattrs = np.ascontiguousarray(np.stack([yc, lb, tc, ts, nb, ny, wb, wy], 1)).tobytes()
+            cmap.hattrs = np.ascontiguousarray(np.stack([yc, lb, tc, ts, nb, ny, wb, wy, nh, ch, sb, fr["kind"].astype(np.uint8)], 1)).tobytes()
             cmap.hmeta = json.dumps({
                 "y0": int(fr["years"][0]), "y1": int(fr["years"][-1]), "km2": float(CELL_KM2.get(HOLD["res"], 0)),
                 "seq": int(fr.get("seq", 0)), "carry": CARRY_RES, "timing": fr.get("timing"),
                 "classes": [_WC_NAME[c] for c in WC_CODES],
                 "model": fr.get("model"), "p_min": NEW_P_MIN,
+                "hist": [int(fr["hyears"][0]), int(fr["hyears"][-1])] if fr.get("hist") else None,
+                "hist_pending": bool(fr.get("hist_pending")),
+                "kinds": fr.get("kinds"),
             })
         HOLD["sent"] = fr
+
+    def _history_later(fr0, key, box, res, rres, fres, stats):
+        """THE WHOLE HISTORY, when ready (Stephen, 2026-09-27: "we get what we
+        normally get zoomed in and the new info comes when ready so we dont
+        have to wait"): the window's frame is already on the map; the other
+        AlphaEarth years are read in the background, the frame is built again
+        with them (same cells, same model, same seq, so the browser recolors
+        and keeps its tiles) and replaces it if it is still the one showing.
+        A new view cancels it."""
+        y0, y1 = key[0], key[1]
+        bkey = (res, key[3])
+
+        async def _later():
+            t0 = time.time()
+            try:
+                need = [y for y in AEF_YEARS_ALL if (y, bkey) not in HOLD["aef"]]
+                got = await asyncio.gather(*(aef_fold(box, fres, y, read_res=rres) for y in need))
+                for y, r in zip(need, got):
+                    HOLD["aef"][(y, bkey)] = r
+                if HOLD["frame"] is not fr0:
+                    return
+                aef_by_year = {y: HOLD["aef"][(y, bkey)][0] for y in AEF_YEARS_ALL if (y, bkey) in HOLD["aef"]}
+                wc, wsf = HOLD["wc"].get(bkey), HOLD["wsf"].get(bkey, (None, ""))
+                if any(y not in aef_by_year for y in range(y0, y1 + 1)) or wc is None or (USE_WSF and wsf[0] is None):
+                    return
+                t1 = time.time()
+                km, under = fr0.get("km", (None, False))
+                async with HOLD["build_lock"]:
+                    fr = await cpu(build_frame, aef_by_year, wc[0], y0, y1, res, wsf[0], km, under, True)
+                if fr is None or HOLD["frame"] is not fr0 or len(fr["cellid"]) != len(fr0["cellid"]):
+                    return
+                fr["seq"], fr["km"], fr["hist_pending"] = fr0["seq"], fr0.get("km"), False
+                fr["timing"] = {**(fr0.get("timing") or {}), "hist": 1e3 * (t1 - t0), "t_frame": time.time()}
+                HOLD["memo"][key] = (fr, stats)
+                HOLD["frame"] = fr
+                _paint()
+                HOLD["hex_status"] = HOLD["hex_ready"] = (
+                    f"hexagons: {stats} | history {AEF_YEARS_ALL[0]} to {AEF_YEARS_ALL[-1]}: read {t1 - t0:.1f} s, "
+                    f"frame {time.time() - t1:.1f} s | {fr['score']}")
+                _say(HOLD["hex_status"])
+                if HOLD.get("card_pick"):
+                    _card_send(HOLD["card_pick"])
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                tb = traceback.extract_tb(exc.__traceback__)
+                _say(f"history failed: {type(exc).__name__}: {exc}" + (f" (line {tb[-1].lineno})" if tb else ""))
+
+        HOLD["hist_task"] = (key, _spawn(_later()))
 
     async def _serve_hex(vsd, force=False):
         view = view_to_bbox(vsd)
@@ -2933,6 +3307,11 @@ def _(
         rbox = tuple(round(v, 3) for v in box)
         key = (y0, y1, res, rbox)
         t0 = time.time()
+        # zoomed in far enough, the whole history follows once the window is up
+        hist = rres >= HIST_MIN_RES
+        ht = HOLD.get("hist_task")
+        if ht is not None and ht[0] != key and ht[1] is not None:
+            ht[1].cancel()
         years = list(range(y0, y1 + 1))
         HOLD["hex_status"] = f"folding AlphaEarth {y0} to {y1} ({len(years)} years), WSF and the land cover…"
         _say(HOLD["hex_status"])
@@ -2942,10 +3321,10 @@ def _(
             bkey = (res, rbox)
             need = [y for y in years if (y, bkey) not in HOLD["aef"]]
             wneed = bkey not in HOLD["wc"]
-            sneed = bkey not in HOLD["wsf"]
+            sneed = USE_WSF and bkey not in HOLD["wsf"]
             got = await asyncio.gather(
                 wc_fold(box, res) if wneed else asyncio.sleep(0, result=HOLD["wc"].get(bkey)),
-                wsf_fold(box, fres) if sneed else asyncio.sleep(0, result=HOLD["wsf"].get(bkey)),
+                wsf_fold(box, fres) if sneed else asyncio.sleep(0, result=HOLD["wsf"].get(bkey, (None, "WSF off"))),
                 *(aef_fold(box, fres, y, read_res=rres) for y in need),
             )
             if wneed:
@@ -2958,7 +3337,7 @@ def _(
                 while len(HOLD[k_]) > 40:
                     HOLD[k_].pop(next(iter(HOLD[k_])))
             wc, s_wc = HOLD["wc"][bkey]
-            wsf, s_wsf = HOLD["wsf"][bkey]
+            wsf, s_wsf = HOLD["wsf"].get(bkey, (None, "WSF off"))
             aef_by_year = {y: HOLD["aef"][(y, bkey)][0] for y in years if (y, bkey) in HOLD["aef"]}
             t1 = time.time()
             # the model: kept from the view that taught it while zoomed in
@@ -2969,10 +3348,14 @@ def _(
                 km = None
             cx, cy = vsd["longitude"], vsd["latitude"]
             under = km is not None and km["res"] < res and km["box"][0] <= cx <= km["box"][2] and km["box"][1] <= cy <= km["box"][3]
-            fr = await cpu(build_frame, aef_by_year, wc, y0, y1, res, wsf, km, under)
+            async with HOLD["build_lock"]:
+                fr = await cpu(build_frame, aef_by_year, wc, y0, y1, res, wsf, km, under)
+            if fr is not None:
+                # the history frame is built with the same model
+                fr["km"] = (km, under)
             if fr is not None and fr.get("model_w") is not None:
                 HOLD["nmodel"] = {"w": fr["model_w"], "y0": y0, "y1": y1, "res": res, "box": box,
-                                  "info": {k: v for k, v in fr["model"].items() if k in ("pos", "neg", "recall", "precision")}}
+                                  "info": {k: v for k, v in fr["model"].items() if k in ("pos", "neg", "hard", "recall", "precision", "hard_picked")}}
             if fr is not None:
                 fr["timing"] = {
                     "reads": 1e3 * (t1 - t0), "frame": 1e3 * (time.time() - t1),
@@ -2998,11 +3381,15 @@ def _(
             HOLD["memo"][key] = (fr, stats)
             while len(HOLD["memo"]) > 12:
                 HOLD["memo"].pop(next(iter(HOLD["memo"])))
+        fr["hist_pending"] = hist and not fr.get("hist")
         HOLD["frame"], HOLD["box"], HOLD["res"] = fr, box, res
         _paint()
-        HOLD["hex_status"] = HOLD["hex_ready"] = f"hexagons: {stats} | {fr['score']} | {time.time() - t0:.1f} s"
+        HOLD["hex_status"] = HOLD["hex_ready"] = f"hexagons: {stats} | {fr['score']} | {time.time() - t0:.1f} s" + (" | reading the rest of the history…" if fr["hist_pending"] else "")
         if HOLD.get("card_pick"):
             _card_send(HOLD["card_pick"])
+        ht = HOLD.get("hist_task")
+        if fr["hist_pending"] and not (ht is not None and ht[0] == key and ht[1] is not None and not ht[1].done()):
+            _history_later(fr, key, box, res, rres, fres, stats)
 
     async def _serve(vs, force=False):
         vsd = _vsd(vs)
@@ -3081,6 +3468,8 @@ def _(
             lc = [[_WC_NAME[WC_CODES[k]], float(sh[k])] for k in np.argsort(-sh) if sh[k] >= 0.01][:5]
         return {
             "kind": "hex", "cell": cellh, "level": None if np.isnan(lv) else lv, "big": int(fr["big"][i]),
+            "stand": None if np.isnan(fr["stand"][i]) else float(fr["stand"][i]), "use_wsf": USE_WSF,
+            "kind": int(fr["kind"][i]), "kinds": fr.get("kinds"),
             "y0": int(fr["years"][0]), "y1": int(fr["years"][-1]),
             "steps": [None if np.isnan(v) else float(v) for v in fr["steps"][:, i]],
             "rel": [None if np.isnan(v) else float(v) for v in fr["rel"][:, i]],
@@ -3091,6 +3480,16 @@ def _(
             "model_why": fr["model"].get("why"),
             "wsf_new": None if np.isnan(fr["wsf_new"][i]) else float(fr["wsf_new"][i]),
             "wsf_year": int(fr["wsf_year"][i]), "wsf_npx": int(fr["wsf_npx"][i]),
+            **({
+                "hist": [int(fr["hyears"][0]), int(fr["hyears"][-1])],
+                "ncode": int(fr["ncode"][i]), "ccode": int(fr["ccode"][i]),
+                "nratio": None if np.isnan(fr["nratio"][i]) else float(fr["nratio"][i]),
+                "cratio": None if np.isnan(fr["cratio"][i]) else float(fr["cratio"][i]),
+                "steps": [None if np.isnan(v) else float(v) for v in fr["hsteps"][:, i]],
+                "rel": [None if np.isnan(v) else float(v) for v in fr["hrel"][:, i]],
+                "step_years": [int(b) for _, b in fr["hstep_years"]],
+                "hbig": int(fr["hbig"][i]),
+            } if fr.get("hist") else {}),
         }
 
     def _card_send(p):

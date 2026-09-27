@@ -82,9 +82,18 @@ uv run marimo run aef-s2-landcover-explorer.py --sandbox
 
 ## The new construction notebook
 
+**On the `aef-change-kinds` branch** WSF is switched off (`USE_WSF =
+False`) and `A` is **Kinds of change**, from AlphaEarth alone: the quarter
+of the view that moved most, less the change the whole view made, grouped
+by the direction it moved into six kinds (spherical k-means), in
+Okabe-Ito colors with quiet ground faint gray. The key gives each kind's
+hexagons, most common year and the WorldCover class it has most more of
+than the view; click a kind to hide it. `S` is raw AEF Change. The WSF
+model described below is still in the code for later.
+
 `aef-s2-new-construction.py` is a copy of the change notebook that shows
-only new construction (`N`, the default; its `S` and `D` modes are still
-there). The World Settlement Footprint tracker dates, every half year,
+only new construction (`A`, the default; its raw AEF Change mode, `S`, is
+still there, and the change year moved to the card). The World Settlement Footprint tracker dates, every half year,
 when each 10 m pixel first read as built-up. For the view on screen it is
 folded to the same finer H3 cells as AlphaEarth. A finer cell is an
 example of new construction when at least 20% of its WSF samples first
@@ -93,9 +102,20 @@ read as built inside the years read, and of unchanged ground when under
 cell's first- and last-year AlphaEarth vectors (128 numbers, fit with
 numpy) learns the difference and scores every cell, WSF's or not. Each
 hexagon takes its best-scoring finer cell, and hexagons scoring 0.5 or
-more are drawn, colored by the year their change stood out. A held-out
-fifth of the examples says how many of WSF's new places the model finds
-and how many of its picks WSF also calls new; the status line reports it.
+more are drawn, colored in Oranges by the year their change stood out. Half
+of the unchanged examples are ground that moved in AlphaEarth as much as
+new construction does (fields, roads, cleared land, water), weighted up, so
+the model learns built against other change rather than change against
+quiet ground. A held-out fifth of the examples says how many of WSF's new
+places the model finds and how many of its picks WSF also calls new; the
+status line reports it.
+
+Zoomed in past about 13, every AlphaEarth year (2017 to 2025) is read in
+the background once the window's hexagons are up.
+Each hexagon's change is judged by what the ground did around it: one step
+that held, came back, changes this much most years, kept changing after,
+or too recent to tell. The card says which. New construction leaves out
+the ones that came back or change most years; AEF Change stays raw.
 
 The model is learned where there is enough to learn from: a view with at
 least 25 new places by WSF. Zoomed in under that view it is kept, so a
