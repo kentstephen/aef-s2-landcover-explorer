@@ -2359,15 +2359,15 @@ def _(anywidget, asyncio, time, traitlets):
                 self.send({"kind": "tile", "id": c["id"], "kt": kt}, buffers=[png])
 
         _css = r"""
-        .at{--glass:rgba(255,255,255,.9);--card:rgba(255,255,255,.72);--glass-hi:#fff;--line:rgba(24,32,40,.13);--text:#1b2127;--muted:#5d6873;--faint:rgba(24,32,40,.18);--cool:#0072b2;--sel:rgba(24,32,40,.08);
-          position:relative;width:100%;background:#eef0f1;color:var(--text);font:14px/1.45 "Instrument Sans",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;overflow:hidden;border-radius:10px;-webkit-font-smoothing:antialiased}
+        .at{--glass:rgba(26,29,33,.92);--card:rgba(26,29,33,.8);--glass-hi:#23272c;--line:rgba(255,255,255,.12);--text:#e6e9ec;--muted:#9ba5af;--faint:rgba(255,255,255,.18);--cool:#56b4e9;--sel:rgba(255,255,255,.08);--on:#15181b;
+          position:relative;width:100%;background:#0e0e0e;color:var(--text);font:14px/1.45 "Instrument Sans",ui-sans-serif,system-ui,sans-serif;font-variant-numeric:tabular-nums;overflow:hidden;border-radius:10px;-webkit-font-smoothing:antialiased}
         .at.fit{position:fixed;inset:0;z-index:9999;border-radius:0}
         .at *{box-sizing:border-box}
         .at-pane{position:relative;width:100%}
         .at-map{position:absolute;inset:0}
         .at-map.holding{cursor:ns-resize}
         .at-map.holding.key{cursor:grab}
-        .at-glass{background:var(--glass);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 22px rgba(20,30,40,.14)}
+        .at-glass{background:var(--glass);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 22px rgba(0,0,0,.35)}
         /* the cards a little see-through; the stronger blur keeps the text clear (Stephen, 2026-09-27) */
         .at-panel.at-glass,.at-yc.at-glass{background:var(--card);backdrop-filter:blur(18px) saturate(1.15);-webkit-backdrop-filter:blur(18px) saturate(1.15)}
         .at button{font:inherit;color:inherit}
@@ -2387,7 +2387,7 @@ def _(anywidget, asyncio, time, traitlets):
         .seg-s,.seg-f{display:flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:9px;width:max-content}
         .seg-s button,.seg-f button{border:0;background:none;color:var(--muted);padding:3px 10px;border-radius:7px;cursor:pointer}
         .seg-s button:hover,.seg-f button:hover{color:var(--text)}
-        .seg-s button.on,.seg-f button.on{background:var(--text);color:#fff}
+        .seg-s button.on,.seg-f button.on{background:var(--text);color:var(--on)}
         .seg-f{margin-bottom:6px;font-size:12.5px}
         .seg-s.col{flex-direction:column;align-items:stretch}
         .at-kinds{display:flex;flex-direction:column;gap:2px;width:100%}
@@ -2397,7 +2397,7 @@ def _(anywidget, asyncio, time, traitlets):
         .at-kinds button span{color:var(--muted)}
         .at-kinds button.off{opacity:.4}
         .at button.wait{opacity:.4}
-        @keyframes at-ready{0%{box-shadow:0 0 0 0 rgba(0,114,178,.5)}100%{box-shadow:0 0 0 6px rgba(0,114,178,0)}}
+        @keyframes at-ready{0%{box-shadow:0 0 0 0 rgba(86,180,233,.6)}100%{box-shadow:0 0 0 6px rgba(86,180,233,0)}}
         .seg-s button.ready{animation:at-ready 1.2s ease-out 2}
         .seg-s button.fresh{position:relative}
         .seg-s button.fresh::before{content:"";position:absolute;top:4px;left:3px;width:5px;height:5px;border-radius:50%;background:var(--cool)}
@@ -2407,7 +2407,9 @@ def _(anywidget, asyncio, time, traitlets):
         .at-kind-dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
         .seg-s.col button{text-align:left;display:flex;align-items:center;justify-content:space-between;gap:14px}
         .seg-s kbd{font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:2px 5px}
-        .seg-s button.on kbd{color:#fff;border-color:rgba(255,255,255,.45)}
+        .seg-f kbd{font:10.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 4px;margin-left:3px}
+        .seg-f button.on kbd{color:var(--on);border-color:rgba(0,0,0,.35)}
+        .seg-s button.on kbd{color:var(--on);border-color:rgba(0,0,0,.35)}
         .at-row.top{align-items:flex-start}
         .at-row.top .at-lab{padding-top:5px}
         .at-hd{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:-2px -4px -2px 0}
@@ -2432,8 +2434,8 @@ def _(anywidget, asyncio, time, traitlets):
         .at-win input:focus{outline:none}
         .at-win input::-webkit-slider-runnable-track{background:none;height:22px}
         .at-win input::-moz-range-track{background:none;height:22px}
-        .at-win input::-webkit-slider-thumb{pointer-events:auto;-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:4px;border-radius:50%;background:var(--text);border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.3);cursor:grab}
-        .at-win input::-moz-range-thumb{pointer-events:auto;width:14px;height:14px;border-radius:50%;background:var(--text);border:2px solid #fff;cursor:grab}
+        .at-win input::-webkit-slider-thumb{pointer-events:auto;-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:4px;border-radius:50%;background:var(--text);border:2px solid var(--on);box-shadow:0 0 0 1px rgba(255,255,255,.3);cursor:grab}
+        .at-win input::-moz-range-thumb{pointer-events:auto;width:14px;height:14px;border-radius:50%;background:var(--text);border:2px solid var(--on);cursor:grab}
         .at-win .trk{position:absolute;left:8px;right:8px;top:9px;height:4px;background:var(--faint);border-radius:2px}
         .at-win .spn{position:absolute;top:9px;height:4px;background:var(--text);border-radius:2px}
         .at-win .tks{position:absolute;left:8px;right:8px;top:19px;display:flex;justify-content:space-between;font-size:9px;color:var(--muted);line-height:1}
@@ -2442,14 +2444,14 @@ def _(anywidget, asyncio, time, traitlets):
         .at-wtxt{font-size:12.5px;white-space:nowrap}
         .at-tools{position:absolute;right:12px;top:12px;z-index:7;display:flex;gap:8px}
         .at-btn{height:40px;min-width:40px;padding:0 13px;display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;white-space:nowrap}
-        .at-btn:hover{border-color:rgba(24,32,40,.3)}
-        .at-btn.on{background:var(--text);color:#fff;border-color:var(--text)}
+        .at-btn:hover{border-color:rgba(255,255,255,.3)}
+        .at-btn.on{background:var(--text);color:var(--on);border-color:var(--text)}
         .at-bar{position:absolute;left:0;right:0;top:0;height:3px;z-index:9;overflow:hidden;pointer-events:none;opacity:0;transition:opacity .3s}
         .at-bar.busy{opacity:1}
         .at-bar i{position:absolute;top:0;height:3px;width:28%;background:linear-gradient(90deg,transparent,var(--text),transparent);animation:at-run 1.2s ease-in-out infinite}
         @keyframes at-run{0%{left:-28%}100%{left:100%}}
         .at-msg{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;z-index:5;font-size:13px;color:var(--muted);padding:6px 11px;display:none;max-width:min(520px,calc(100% - 24px))}
-        .at-msg.err{color:#8a4b00}
+        .at-msg.err{color:#e69f00}
         .at-yc{position:absolute;right:12px;top:60px;z-index:6;width:380px;max-width:calc(100% - 24px);padding:14px 16px 12px;transform-origin:top right}
         .at-yc .yr{display:flex;align-items:flex-end;gap:12px}
         .at-yc .yr b{font-size:56px;line-height:.86;font-weight:600;letter-spacing:-.035em;font-stretch:88%}
@@ -2476,25 +2478,30 @@ def _(anywidget, asyncio, time, traitlets):
         .at-lc{display:grid;grid-template-columns:1fr 120px 36px;gap:4px 8px;align-items:center;font-size:12.5px;margin:4px 0 6px}
         .at-lc i{display:block;height:8px;border-radius:0 4px 4px 0;background:var(--text);opacity:.72}
         .at-lc span:nth-child(3n){text-align:right;color:var(--muted)}
-        .at-tip{position:absolute;z-index:10;pointer-events:none;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.5px;line-height:1.4;display:none;box-shadow:0 4px 14px rgba(20,30,40,.12);max-width:260px}
+        .at-tip{position:absolute;z-index:10;pointer-events:none;background:var(--glass-hi);border:1px solid var(--line);border-radius:8px;padding:6px 9px;font-size:12.5px;line-height:1.4;display:none;box-shadow:0 4px 14px rgba(0,0,0,.35);max-width:260px}
         .at-more{position:absolute;right:12px;top:60px;z-index:8;width:300px;padding:8px;display:none}
         .at-more .item{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 10px;border-radius:9px}
         .at-more .item:hover{background:var(--sel)}
         .at-more .item small{display:block;color:var(--muted);font-size:12px}
         .at-more hr{border:0;border-top:1px solid var(--line);margin:4px 6px}
-        .at-chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:4px 12px;cursor:pointer}
-        .at-chip:hover{border-color:rgba(24,32,40,.35)}
-        .at-sw{position:relative;width:34px;height:20px;flex:0 0 auto;border-radius:999px;background:rgba(24,32,40,.2);border:0;cursor:pointer;transition:background .2s}
+        .at-chip{border:1px solid var(--line);background:var(--glass-hi);border-radius:999px;padding:4px 12px;cursor:pointer}
+        .at-chip:hover{border-color:rgba(255,255,255,.35)}
+        .at-sw{position:relative;width:34px;height:20px;flex:0 0 auto;border-radius:999px;background:rgba(255,255,255,.2);border:0;cursor:pointer;transition:background .2s}
         .at-sw::after{content:"";position:absolute;left:3px;top:3px;width:14px;height:14px;border-radius:50%;background:#fff;transition:left .2s}
         .at-sw.on{background:var(--cool)}
         .at-sw.on::after{left:17px}
         .at-more input[type=range]{width:120px;accent-color:var(--cool)}
-        .at-about{position:absolute;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(20,30,40,.35)}
-        .at-about .box{width:min(620px,calc(100% - 32px));max-height:calc(100% - 64px);overflow:auto;padding:22px 26px;line-height:1.55;background:#fff}
+        .at-about{position:absolute;inset:0;z-index:20;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+        .at-about .box{width:min(620px,calc(100% - 32px));max-height:calc(100% - 64px);overflow:auto;padding:22px 26px;line-height:1.55;background:var(--glass-hi)}
         .at-about h2{margin:0 0 10px;font-size:22px;font-weight:600;letter-spacing:-.01em}
         .at-about p{margin:0 0 10px;max-width:66ch}
         .at-about small{color:var(--muted)}
-        .at .maplibregl-ctrl-group{border:1px solid var(--line);box-shadow:0 6px 22px rgba(20,30,40,.14);border-radius:10px}
+        .at .maplibregl-ctrl-group{border:1px solid var(--line);box-shadow:0 6px 22px rgba(0,0,0,.35);border-radius:10px;background:var(--glass)}
+        .at .maplibregl-ctrl-group button+button{border-top-color:var(--line)}
+        .at .maplibregl-ctrl button .maplibregl-ctrl-icon{filter:invert(1)}
+        .at .maplibregl-ctrl-attrib{background:var(--card);color:var(--muted)}
+        .at .maplibregl-ctrl-attrib a{color:var(--muted)}
+        .at .maplibregl-ctrl-attrib-button{filter:invert(1)}
         @media (max-width:760px){.at-top{max-width:calc(100% - 24px)}.at-search{width:calc(100vw - 48px)}.at-yc{top:auto;bottom:12px;max-height:45%;overflow:auto}.at-tools{top:108px}}
         @media (prefers-reduced-motion:reduce){.at-bar i{animation:none;left:0;width:100%}}
         """
@@ -2508,13 +2515,15 @@ def _(anywidget, asyncio, time, traitlets):
         import {Protocol as PMProtocol} from "https://esm.sh/pmtiles@4.5.0";
         maplibregl.addProtocol("pmtiles", new PMProtocol().tile);
 
-        const STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+        // dark basemap, trying it (Stephen, 2026-09-27); light was
+        // https://basemaps.cartocdn.com/gl/positron-gl-style/style.json
+        const STYLE = "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
         const FONTS = "https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&display=swap";
         const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
         const fmt = (n) => Number(n).toLocaleString("en-US");
         const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
         const cap = (s) => s ? s[0].toUpperCase() + s.slice(1) : s;
-        const INK = [27, 33, 39];
+        const INK = [230, 233, 236];
 
         function bytesOf(v) {
           if (!v) return null;
@@ -2588,7 +2597,7 @@ def _(anywidget, asyncio, time, traitlets):
           const A_FILL = cfg.alpha_fill || 235, A_QUIET = cfg.alpha_quiet || 70, A_DIM = 45;
           const HEXZ = cfg.hex_zoom || 9, HOLD_MS = cfg.hold_ms || 200, SLOP = cfg.hold_slop || 5;
           const st = {
-            gmode: cfg.use_wsf ? "new" : "much", want: cfg.use_wsf ? "new" : "much", hideKinds: new Set(), focus: "dim", y0: cfg.aef_from || 2022, y1: cfg.aef_to || 2025,
+            gmode: cfg.use_wsf ? "new" : "much", want: cfg.use_wsf ? "new" : "much", hideKinds: new Set(), focus: "all", y0: cfg.aef_from || 2022, y1: cfg.aef_to || 2025,
             imgYear: cfg.s2_year || S2Y[S2Y.length - 1], labels: true, s2scale: Number(cfg.s2_scale) || 1,
             fit: !!cfg.fit, holding: false,
           };
@@ -2714,8 +2723,8 @@ def _(anywidget, asyncio, time, traitlets):
             const m_ = hmeta.model;
             if (st.gmode === "kinds") {
               const ks = hmeta.kinds || [];
-              const FOC = [["all", "All", "every hexagon in full"], ["dim", "Dim unchanged", "fainter where AlphaEarth reads the same land cover every year"], ["built", "Built", "full only where the land cover changed and was built-up, road or construction in some year"]];
-              let h = `<div class="seg-f">` + FOC.map(([k, t, tip]) => `<button data-focus="${k}" class="${st.focus === k ? "on" : ""}" title="${tip}">${t}</button>`).join("") + `</div><div class="at-kinds">`;
+              const FOC = [["all", "All", "every hexagon in full", "Q"], ["built", "Built", "full only where the land cover changed and was built-up, road or construction in some year", "W"]];
+              let h = `<div class="seg-f">` + FOC.map(([k, t, tip, key]) => `<button data-focus="${k}" class="${st.focus === k ? "on" : ""}" title="${tip} (${key})">${t} <kbd>${key}</kbd></button>`).join("") + `</div><div class="at-kinds">`;
               ks.forEach((q, j) => {
                 const k = j + 1, off = st.hideKinds.has(k);
                 h += `<button data-kind="${k}" class="${off ? "off" : ""}" title="${off ? "show" : "hide"} kind ${k}"><i style="background:${kindCss(k)}"></i><b>${k}</b><span>${fmt(q.n)}${q.year ? `, most ${q.year}` : ""}${q.from ? `, ${lcPair(q.from, q.to)}` : ""}</span></button>`;
@@ -2855,11 +2864,9 @@ def _(anywidget, asyncio, time, traitlets):
                 else if (st.hideKinds.has(kd)) continue;
                 else {
                   col = KIND_RGB[(kd - 1) % KIND_RGB.length]; a = Math.round(110 + (A_FILL - 110) * t);
-                  // the key's focus: ground AlphaEarth reads as one class every
-                  // year (Dim unchanged), or all but built-up, road and
-                  // construction that changed (Built), made more see-through
-                  const lc = hattrs[a8 + 12];
-                  if ((st.focus === "dim" && lc === 1) || (st.focus === "built" && lc !== 3)) a = A_DIM;
+                  // the key's Built: all but built-up, road and construction
+                  // that changed made more see-through
+                  if (st.focus === "built" && hattrs[a8 + 12] !== 3) a = A_DIM;
                 }
               } else {
                 if (!lv) continue;
@@ -2930,11 +2937,11 @@ def _(anywidget, asyncio, time, traitlets):
               if (h) s += `<path d="M${x},${base} v${-(h - r)} q0,${-r} ${r},${-r} h${bw - 2 * r} q${r},0 ${r},${r} v${h - r} z" fill="${rgba(INK, cur ? 0.9 : 0.28)}"/>`;
               const why = c.dated[y] ? `${fmt(v)} hexagon${v === 1 ? "" : "s"} changed most between the ${y - 1} and ${y} pictures` : `${y} is outside the years read: widen them to ${y - 1} to date changes into ${y}`;
               s += `<rect x="${x - gap / 2}" y="0" width="${bw + gap}" height="${H}" fill="transparent" data-tip="${why}"/>`;
-              if (!c.dated[y]) s += `<line x1="${x}" x2="${x + bw}" y1="${base - 1}" y2="${base - 1}" stroke="rgba(24,32,40,.3)" stroke-dasharray="2 3"/>`;
+              if (!c.dated[y]) s += `<line x1="${x}" x2="${x + bw}" y1="${base - 1}" y2="${base - 1}" stroke="rgba(230,233,236,.3)" stroke-dasharray="2 3"/>`;
               if (cur && v) s += `<text class="lbl" x="${x + bw / 2}" y="${base - h - 4}" text-anchor="middle">${fmt(v)}</text>`;
               s += `<text x="${x + bw / 2}" y="${H - 4}" text-anchor="middle"${cur ? ' class="lbl"' : ""}>${y}</text>`;
             });
-            s += `<line x1="0" x2="${W}" y1="${base + 0.5}" y2="${base + 0.5}" stroke="rgba(24,32,40,.25)"/></svg>`;
+            s += `<line x1="0" x2="${W}" y1="${base + 0.5}" y2="${base + 0.5}" stroke="rgba(230,233,236,.25)"/></svg>`;
             return s;
           }
           // the clicked hexagon's steps, each as a multiple of that year's
@@ -2955,8 +2962,8 @@ def _(anywidget, asyncio, time, traitlets):
               s += `<rect x="${x - gap / 2}" y="0" width="${bw + gap}" height="${H}" fill="transparent" data-tip="${y - 1} to ${y}: ${v == null ? "no data" : `${v.toFixed(1)} times the usual step here that year (${steps[i].toFixed(3)})`}"/>`;
               s += `<text x="${x + bw / 2}" y="${H - 4}" text-anchor="middle"${y === big ? ' class="lbl"' : ""}>${n > 5 ? `’${String(y).slice(-2)}` : `’${String(y - 1).slice(-2)} to ’${String(y).slice(-2)}`}</text>`;
             });
-            const ty = yOf(1); s += `<line x1="0" x2="${W}" y1="${ty}" y2="${ty}" stroke="rgba(24,32,40,.55)" stroke-dasharray="3 3"/><text x="${W}" y="${ty - 3}" text-anchor="end">usual step here</text>`;
-            s += `<line x1="0" x2="${W}" y1="${base + 0.5}" y2="${base + 0.5}" stroke="rgba(24,32,40,.25)"/></svg>`;
+            const ty = yOf(1); s += `<line x1="0" x2="${W}" y1="${ty}" y2="${ty}" stroke="rgba(230,233,236,.55)" stroke-dasharray="3 3"/><text x="${W}" y="${ty - 3}" text-anchor="end">usual step here</text>`;
+            s += `<line x1="0" x2="${W}" y1="${base + 0.5}" y2="${base + 0.5}" stroke="rgba(230,233,236,.25)"/></svg>`;
             return s;
           }
           function hexSection(c) {
@@ -3433,6 +3440,8 @@ def _(anywidget, asyncio, time, traitlets):
             const k = e.key, lo = st.y0, hi = st.y1;
             if (k === " ") { if (!e.repeat) spaceDown(); }
             else if (/^[aAsS]$/.test(k)) { const w = (k === "s" || k === "S") ? "much" : cfg.use_wsf ? "new" : "kinds"; if (w === "kinds" && !hmeta.kinds_ready) return; st.want = w; const m = drawnMode(); if (m !== st.gmode) { st.gmode = m; recolorHex(); renderYear(); update(); } styleRows(); }
+            // the kinds key's All (Q) / Built (W)
+            else if (/^[qQwW]$/.test(k)) { if (st.gmode !== "kinds") return; st.focus = (k === "q" || k === "Q") ? "all" : "built"; recolorHex(); styleKey(); update(); }
             else if (k === "[" || k === "]") stepImg(k === "]" ? 1 : -1);
             else if (k === ";" || k === "'") { st.s2scale = Math.round(10 * Math.max(0.3, Math.min(2.5, st.s2scale + (k === "'" ? 0.1 : -0.1)))) / 10; gam.value = st.s2scale; clearTimeout(gamT); gamT = setTimeout(() => send("s2scale"), 250); }
             else if (k === "-" || k === "=") { const v = Math.max(aefYears[0], Math.min(hi - 1, lo + (k === "=" ? 1 : -1))); if (v !== lo) { st.y0 = v; winSent = [st.y0, st.y1]; styleWin(); send("aef"); } }
@@ -3882,8 +3891,8 @@ def _(
         sb = np.round(10 * np.clip(np.nan_to_num(fr["stand"]), 0, 25.5)).astype(np.uint8)
         # what AlphaEarth reads it as over the years (lcy): 0 no reading, 1 the
         # same class every year, 2 the class changed, 3 changed and built-up,
-        # road or construction in some year (the key's All / Dim unchanged /
-        # Built, Stephen 2026-09-27)
+        # road or construction in some year (the key's All / Built, Stephen
+        # 2026-09-27)
         lcy = fr.get("lcy")
         lc = np.zeros(len(big), np.uint8)
         if lcy is not None and len(lcy) == len(big) and lcy.shape[1]:
