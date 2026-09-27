@@ -19,7 +19,16 @@
 # ///
 
 
-"""New construction, from AlphaEarth, taught by the World Settlement Footprint.
+"""Kinds of change (v3), from AlphaEarth.
+
+v3 of the AlphaEarth notebooks in this repo: v1 aef-s2-landcover-explorer.py,
+v2 aef-s2-new-construction.py (WSF as the teacher), v3 this one (Stephen,
+2026-09-27): WSF off, the ground that moved most grouped by the way it
+moved, and the land cover read from AlphaEarth every year, taught by Impact
+Observatory's annual maps and Overture roads and land use. What follows
+below is v2's account, from which this was copied.
+
+New construction, from AlphaEarth, taught by the World Settlement Footprint.
 
 Stephen, 2026-09-26: "we just stick to new construction for now", with WSF
 as the teacher: in every view, the places WSF says became built inside the
@@ -57,9 +66,9 @@ back, changes most years, kept changing).
   changed in each year, and the clicked hexagon's account (its year-to-year
   steps, and its land cover from ESA WorldCover 2021).
 
-Run: uv run marimo run aef-s2-what-changed.py --sandbox (it fills the window;
+Run: uv run marimo run aef-s2-kinds-of-change.py --sandbox (it fills the window;
 X or Esc gives the notebook back)
-molab: https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-what-changed.py
+molab: https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-kinds-of-change.py
 
 Attribution: WSF Tracker (c) DLR and MindEarth, via Source Cooperative
 (mindearth/wsf, DOI 10.5281/zenodo.20424537), CC BY 3.0 IGO. "The AlphaEarth Foundations
@@ -170,7 +179,7 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md("""
-    # New construction
+    # Kinds of change (v3)
 
     The hexagons are the places that look like new construction over the
     year window, colored by the year they changed. What counts as new
@@ -198,9 +207,9 @@ def _(mo):
     | `X` | fill the window, and back |
     | `Esc` | close the about box, the menu, the card, then fill the window |
 
-    [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-what-changed.py)
+    [![Open in molab](https://molab.marimo.io/molab-shield.svg)](https://molab.marimo.io/github/github.com/kentstephen/aef-s2-landcover-explorer/blob/main/aef-s2-kinds-of-change.py)
     <small>molab runs in the same region as the data and is the faster place to open this notebook.
-    Locally: `uv run marimo run aef-s2-what-changed.py --sandbox`</small>
+    Locally: `uv run marimo run aef-s2-kinds-of-change.py --sandbox`</small>
     """)
     return
 
