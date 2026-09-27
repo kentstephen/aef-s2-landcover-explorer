@@ -15,6 +15,8 @@
 #     "duckdb>=1.5.5",
 #     "pyproj",
 #     "pillow",
+#     "pmtiles",
+#     "mapbox-vector-tile",
 # ]
 # ///
 
@@ -62,8 +64,8 @@ Satellite Embedding dataset is produced by Google and Google DeepMind"
 data (2021) processed by the ESA WorldCover consortium (CC BY 4.0).
 Impact Observatory, Microsoft and Esri 10 m annual land use and land cover
 v02, via Microsoft Planetary Computer (CC BY 4.0). Overture Maps
-transportation and land use, (c) OpenStreetMap contributors (ODbL), via
-Source Cooperative (fused/overture).
+transportation and land use, (c) OpenStreetMap contributors (ODbL), from
+Overture's PMTiles (release 2026-08-19.0).
 Sentinel-2 yearly mosaics by Earth Genome (CC BY 4.0). Photon (komoot) over
 OpenStreetMap data (ODbL). Place names from Overture Maps divisions:
 (c) OpenStreetMap contributors, Overture Maps Foundation (ODbL), with
@@ -414,7 +416,9 @@ def _(os, tempfile):
     IO_YEARS = tuple(range(2017, 2024))
     # Impact Observatory's classes in LC_VOCAB (clouds and snow teach nothing)
     IO_CLASSES = {1: "water", 2: "trees", 4: "wetland", 5: "cropland", 7: "built-up", 8: "bare", 11: "grass"}
-    OV_BASE = "s3://us-west-2.opendata.source.coop/fused/overture/2026-05-20-0"
+    # Overture's own PMTiles (the divisions file below is one of them):
+    # transportation to zoom 14, base (land use) to zoom 13
+    OV_TILES = ("overturemaps-extras-us-west-2", "tiles/2026-08-19.0")
     LC_ROAD_W = {"motorway": 30, "trunk": 25, "primary": 20, "secondary": 15, "tertiary": 10, "standard_gauge": 12}
     LC_ROAD_FILL = 0.35
 
@@ -504,7 +508,7 @@ def _(os, tempfile):
         LC_ROAD_FILL,
         LC_ROAD_W,
         LC_VOCAB,
-        OV_BASE,
+        OV_TILES,
         MAX_RES,
         MIN_RES,
         MOSAIC_MIN_RES,
@@ -676,6 +680,7 @@ def _(
         def __init__(self, inner, cap):
             self._in, self._cap, self._kept, self.held = inner, cap, {}, 0
             self.reused = self.fetched = 0
+            self._sem = asyncio.Semaphore(48)
 
         def _take(self, k):
             b = self._kept.pop(k, None)
@@ -699,12 +704,27 @@ def _(
                 self._put((path, start, end), b)
             return b
 
+        async def _one(self, path, a, e):
+            # one band's tile, on its own: S3 merges nearby ranges into one
+            # request, and a file's 64 bands merged are ~48 MB, past the 6 s
+            # timeout on a home connection (Stephen, 2026-09-27: a long
+            # "Generic S3 error ... Timeout" and a view that never came).
+            # Small requests side by side, each retried twice.
+            for k in range(3):
+                try:
+                    async with self._sem:
+                        return await self._in.get_range_async(path, start=a, end=e)
+                except Exception:
+                    if k == 2:
+                        raise
+                    await asyncio.sleep(0.5 * (k + 1))
+
         async def get_ranges_async(self, path, *, starts, ends=None, lengths=None):
             ends = [a + n for a, n in zip(starts, lengths)] if ends is None else list(ends)
             out = [self._take((path, a, e)) for a, e in zip(starts, ends)]
             miss = [i for i, b in enumerate(out) if b is None]
             if miss:
-                got = await self._in.get_ranges_async(path, starts=[starts[i] for i in miss], ends=[ends[i] for i in miss])
+                got = await asyncio.gather(*(self._one(path, starts[i], ends[i]) for i in miss))
                 for i, b in zip(miss, got):
                     out[i] = b
                     self._put((path, starts[i], ends[i]), b)
@@ -876,10 +896,13 @@ def _(
             return None, f"AEF {year}: no COG tiles under the view"
         if len(hit) > AEF_MAX_FILES:
             return None, f"AEF {year}: {len(hit):,} tiles under the view; zoom in"
-        parts = await asyncio.gather(*(_read_cog(year, int(i), li, box) for i in hit))
-        parts = [p for p in parts if p is not None]
+        parts = await asyncio.gather(*(_read_cog(year, int(i), li, box) for i in hit), return_exceptions=True)
+        bad = [p for p in parts if isinstance(p, BaseException)]
+        if any(isinstance(p, asyncio.CancelledError) for p in bad):
+            raise asyncio.CancelledError()
+        parts = [p for p in parts if p is not None and not isinstance(p, BaseException)]
         if not parts:
-            return None, f"AEF {year}: nothing read"
+            return None, f"AEF {year}: nothing read" + (f" ({type(bad[0]).__name__}: {str(bad[0])[:80]})" if bad else "")
         t1 = time.time()
 
         def _cogs():
@@ -893,6 +916,7 @@ def _(
             f"AEF {year} ov{li} ({10 * 2 ** (li + 1)} m) {len(parts)} files {npx / 1e6:.2f} Mpx "
             f"{t1 - t0:.1f} s · fold {out.num_rows:,} {time.time() - t1:.1f} s"
             f" · kept {_store.held / 1e6:,.0f} MB (fetched {_store.fetched / 1e6:,.0f}, reused {_store.reused / 1e6:,.0f})"
+            + (f" · {len(bad)} files failed ({type(bad[0]).__name__})" if bad else "")
         )
 
     return aef_fold, aef_window
@@ -1454,7 +1478,7 @@ def _(
     IO_TOKEN,
     LC_ROAD_W,
     LC_VOCAB,
-    OV_BASE,
+    OV_TILES,
     Transformer,
     Window,
     asyncio,
@@ -1582,56 +1606,128 @@ def _(
         except Exception as e:
             return None, f"Impact Observatory {y}: {type(e).__name__}: {e}"
 
-    # Overture, as Fused partitions it on Source Cooperative (the same files
-    # the place names come from): major roads and rail as road area per finer
-    # cell (a point every quarter cell edge along each line, 5 m at least,
-    # each worth that length x the class's width), and land use polygons as the finer cells whose centers they hold
-    # (1 built-up, 2 construction). DuckDB keeps the row groups whose bbox can
-    # touch the view. Its own connection, object cache on.
-    _ov = {"con": None}
-    _ov_lock = _th.Lock()
+    # Overture from its own PMTiles (Stephen, 2026-09-27: "the land cover and
+    # overture PM tiles are cheap and we can load them sooner", "in the
+    # kernel not in the browser"): the vector tiles under the box, fetched
+    # together (transportation at zoom 14, land use at zoom 13; about 8 MB and
+    # 4 s for a 20 x 12 km view, against 13 s for DuckDB over the GeoParquet).
+    # Major roads and rail become road area per finer cell (a point every
+    # quarter cell edge along each line, 5 m at least, each worth that length
+    # x the class's width; only points inside their own tile, so the tile
+    # buffers do not count twice), and land use polygons the finer cells whose
+    # centers they hold (1 built-up, 2 construction).
+    import gzip as _gz
+    import struct as _st
+    import obstore as _obs
+    from obstore.store import S3Store as _S3
+    import mapbox_vector_tile as _mvt
+    from pmtiles.tile import deserialize_directory as _pm_dir, deserialize_header as _pm_head, find_tile as _pm_find, zxy_to_tileid as _pm_id
 
-    def _ov_con():
-        with _ov_lock:
-            if _ov["con"] is None:
-                c = duckdb.connect()
-                for ext in ("spatial", "httpfs"):
-                    try:
-                        c.execute(f"LOAD {ext}")
-                    except Exception:
-                        c.execute(f"INSTALL {ext}; LOAD {ext}")
-                c.execute("SET GLOBAL s3_region='us-west-2'; SET GLOBAL s3_url_style='path'; SET GLOBAL enable_object_cache=true")
-                _ov["con"] = c
-            return _ov["con"]
+    _ovs = _S3(OV_TILES[0], region="us-west-2", skip_signature=True)
+    _pm_kept = {}  # (path, offset, length) -> the header or a directory's bytes, in flight or read
 
-    _W_SQL = "CASE class " + " ".join(f"WHEN '{k}' THEN {w}" for k, w in LC_ROAD_W.items()) + " END"
-    _R_IN = ", ".join(f"'{k}'" for k in LC_ROAD_W)
+    async def _pm_bytes(path, off, n):
+        k = (path, off, n)
+        if k not in _pm_kept:
+            _pm_kept[k] = asyncio.ensure_future(_obs.get_range_async(_ovs, path, start=off, length=n))
+        return bytes(await _pm_kept[k])
 
-    def _ov_roads(box, step):
+    async def _pm_tiles(name, z, box):
+        """The tiles of OV_TILES/<name>.pmtiles at zoom z under the box: [(x, y, bytes)]."""
+        path = f"{OV_TILES[1]}/{name}.pmtiles"
+        h = _pm_head(await _pm_bytes(path, 0, 127))
+        n = 2 ** z
         W_, S_, E_, N_ = box
-        return _ov_con().cursor().execute(f"""
-            WITH s AS (
-                SELECT {_W_SQL} AS w, geometry AS g, ST_Length_Spheroid(ST_FlipCoordinates(geometry)) AS m
-                FROM read_parquet('{OV_BASE}/theme=transportation/type=segment/*.parquet', hive_partitioning=0)
-                WHERE bbox.xmin < {E_} AND bbox.xmax > {W_} AND bbox.ymin < {N_} AND bbox.ymax > {S_}
-                  AND class IN ({_R_IN})),
-            p AS (
-                SELECT w * m / greatest(1, ceil(m / {step})) AS a,
-                       UNNEST(ST_Dump(ST_LineInterpolatePoints(g, 1.0 / greatest(1, ceil(m / {step})), true))).geom AS pt
-                FROM s WHERE m > 0)
-            SELECT ST_Y(pt) AS lat, ST_X(pt) AS lon, a FROM p
-        """).arrow().read_all()
+        ty = lambda la: int((1 - math.asinh(math.tan(math.radians(la))) / math.pi) / 2 * n)
+        x0, x1 = int((W_ + 180) / 360 * n), int((E_ + 180) / 360 * n)
 
-    def _ov_landuse(box):
-        W_, S_, E_, N_ = box
-        return _ov_con().cursor().execute(f"""
-            SELECT CASE WHEN subtype IN ('construction', 'resource_extraction') OR class = 'landfill' THEN 2 ELSE 1 END AS k,
-                   ST_AsWKB(geometry) AS wkb
-            FROM read_parquet('{OV_BASE}/theme=base/type=land_use/*.parquet', hive_partitioning=0)
-            WHERE bbox.xmin < {E_} AND bbox.xmax > {W_} AND bbox.ymin < {N_} AND bbox.ymax > {S_}
-              AND (subtype IN ('construction', 'resource_extraction') OR class IN ('industrial', 'residential', 'landfill'))
-              AND ST_GeometryType(geometry) IN ('POLYGON', 'MULTIPOLYGON')
-        """).arrow().read_all()
+        async def one(x, y):
+            tid, o, ln = _pm_id(z, x, y), h["root_offset"], h["root_length"]
+            for _ in range(4):
+                e = _pm_find(_pm_dir(await _pm_bytes(path, o, ln)), tid)
+                if e is None:
+                    return None
+                if e.run_length > 0:
+                    b = bytes(await _obs.get_range_async(_ovs, path, start=h["tile_data_offset"] + e.offset, length=e.length))
+                    return x, y, (_gz.decompress(b) if b[:2] == b"\x1f\x8b" else b)
+                o, ln = h["leaf_directory_offset"] + e.offset, e.length
+            return None
+
+        got = await asyncio.gather(*(one(x, y) for x in range(x0, x1 + 1) for y in range(ty(N_), ty(S_) + 1)))
+        return [g for g in got if g is not None], n
+
+    def _tile_lonlat(xy, x, y, n, ext):
+        # tile pixels (y down) to lon, lat
+        lon = (x + xy[:, 0] / ext) / n * 360 - 180
+        lat = np.degrees(np.arctan(np.sinh(np.pi * (1 - 2 * (y + xy[:, 1] / ext) / n))))
+        return lon, lat
+
+    def _ov_roads(tiles, n, step):
+        lat_, lon_, a_ = [], [], []
+        for x, y, b in tiles:
+            lay = _mvt.decode(b, default_options={"y_coord_down": True}).get("segment")
+            if not lay:
+                continue
+            ext = lay.get("extent", 4096)
+            for f in lay["features"]:
+                w = LC_ROAD_W.get(f["properties"].get("class"))
+                if w is None:
+                    continue
+                g = f["geometry"]
+                lines = [g["coordinates"]] if g["type"] == "LineString" else g["coordinates"] if g["type"] == "MultiLineString" else []
+                for ln in lines:
+                    xy = np.asarray(ln, np.float64)
+                    if len(xy) < 2:
+                        continue
+                    lon, lat = _tile_lonlat(xy, x, y, n, ext)
+                    dx = np.diff(lon) * 111320 * np.cos(np.radians(lat[:-1]))
+                    dy = np.diff(lat) * 110574
+                    cum = np.r_[0, np.cumsum(np.hypot(dx, dy))]
+                    m = cum[-1]
+                    if m <= 0:
+                        continue
+                    k = max(1, math.ceil(m / step))
+                    t = (np.arange(k) + 0.5) * m / k
+                    px = np.interp(t, cum, xy[:, 0])
+                    py = np.interp(t, cum, xy[:, 1])
+                    own = (px >= 0) & (px < ext) & (py >= 0) & (py < ext)  # this tile's own points only
+                    if own.any():
+                        lo, la = _tile_lonlat(np.stack([px[own], py[own]], 1), x, y, n, ext)
+                        lon_.append(lo)
+                        lat_.append(la)
+                        a_.append(np.full(own.sum(), w * m / k))
+        cat = lambda v: np.concatenate(v) if v else np.zeros(0)
+        return pa.table({"lat": cat(lat_), "lon": cat(lon_), "a": cat(a_)})
+
+    def _ov_landuse(tiles, n):
+        ks, wkbs = [], []
+        for x, y, b in tiles:
+            lay = _mvt.decode(b, default_options={"y_coord_down": True}).get("land_use")
+            if not lay:
+                continue
+            ext = lay.get("extent", 4096)
+            for f in lay["features"]:
+                pr, g = f["properties"], f["geometry"]
+                if not (pr.get("subtype") in ("construction", "resource_extraction") or pr.get("class") in ("industrial", "residential", "landfill")):
+                    continue
+                polys = [g["coordinates"]] if g["type"] == "Polygon" else g["coordinates"] if g["type"] == "MultiPolygon" else []
+                parts = []
+                for rings in polys:
+                    rb = []
+                    for r in rings:
+                        xy = np.asarray(r, np.float64)
+                        if len(xy) < 3:
+                            continue
+                        if (xy[0] != xy[-1]).any():
+                            xy = np.vstack([xy, xy[:1]])
+                        lon, lat = _tile_lonlat(xy, x, y, n, ext)
+                        rb.append(_st.pack("<I", len(xy)) + np.stack([lon, lat], 1).astype("<f8").tobytes())
+                    if rb:
+                        parts.append(_st.pack("<BII", 1, 3, len(rb)) + b"".join(rb))
+                if parts:
+                    ks.append(2 if pr.get("subtype") in ("construction", "resource_extraction") or pr.get("class") == "landfill" else 1)
+                    wkbs.append(parts[0] if len(parts) == 1 else _st.pack("<BII", 1, 6, len(parts)) + b"".join(parts))
+        return pa.table({"k": pa.array(ks, pa.uint8()), "wkb": pa.array(wkbs, pa.binary())})
 
     def _ov_cells(roads, lu, fres):
         rc = pa.array(coordinates_to_cells(roads["lat"].to_numpy(), roads["lon"].to_numpy(), fres)).to_numpy(zero_copy_only=False).astype(np.uint64) if roads.num_rows else np.zeros(0, np.uint64)
@@ -1656,10 +1752,16 @@ def _(
         t0 = time.time()
         try:
             step = max(5, round(_EDGE_M.get(fres, 20) / 4))
-            roads, lu = await asyncio.gather(asyncio.to_thread(_ov_roads, box, step), asyncio.to_thread(_ov_landuse, box))
+            (rt, rn), (lt, ln) = await asyncio.gather(_pm_tiles("transportation", 14, box), _pm_tiles("base", 13, box))
             t1 = time.time()
-            out = await cpu(_ov_cells, roads, lu, fres)
-            return out, f"Overture {roads.num_rows:,} road points, {lu.num_rows:,} land use polygons, read {t1 - t0:.1f} s"
+
+            def _job():
+                roads, lu = _ov_roads(rt, rn, step), _ov_landuse(lt, ln)
+                return roads, lu, _ov_cells(roads, lu, fres)
+
+            roads, lu, out = await cpu(_job)
+            return out, (f"Overture PMTiles {len(rt) + len(lt)} tiles {sum(len(t[2]) for t in rt + lt) / 1e6:.1f} MB read {t1 - t0:.1f} s, "
+                         f"{roads.num_rows:,} road points, {lu.num_rows:,} land use polygons, fold {time.time() - t1:.1f} s")
         except Exception as e:
             return None, f"Overture: {type(e).__name__}: {e}"
 
@@ -2666,7 +2768,7 @@ def _(anywidget, asyncio, time, traitlets):
             <p><b>Hold space</b> to see the Sentinel-2 yearly imagery (Earth Genome, 2022 to 2025) instead of the hexagons. It opens on ${S2Y[0]} the first time, then on whichever year you left it at. The mouse stays free: drag the map, or click a cell for its H3 string and lat, long. <b>Scroll</b> while holding to step through the years; let go and the hexagons come back.</p>
             <p><b>Click</b> a hexagon for its account: how much it changed and when, its kind, what AlphaEarth reads it as each year, each year-to-year step, and what the ground is by <b>ESA WorldCover</b> 2021. Zoomed in past 13, every year from 2017 is read and the card says what the ground did after its change.</p>
             <p><small>Keys: A Kinds of change, S AEF Change; hold space for the imagery, scroll for its year; [ and ] the imagery year; ; and ' its brightness; - = and _ + the years read; L place names; / search (a place, or paste an H3 string); X fill the window; Esc close.</small></p>
-            <p><small>WSF Tracker &copy; DLR and MindEarth, via Source Cooperative (mindearth/wsf), CC BY 3.0 IGO. AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Impact Observatory, Microsoft and Esri 10 m annual land use and land cover v02, via Microsoft Planetary Computer (CC BY 4.0). Overture Maps transportation and land use, &copy;&nbsp;OpenStreetMap contributors (ODbL), via Source Cooperative (fused/overture). Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions, &copy;&nbsp;OpenStreetMap contributors, Overture Maps Foundation (ODbL), with geoBoundaries, Esri Community Maps contributors and LINZ (CC BY 4.0): the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
+            <p><small>WSF Tracker &copy; DLR and MindEarth, via Source Cooperative (mindearth/wsf), CC BY 3.0 IGO. AlphaEarth Foundations by Google and Google DeepMind (CC BY 4.0). ESA WorldCover 10 m 2021 v200, contains modified Copernicus Sentinel data processed by the ESA WorldCover consortium (CC BY 4.0). Impact Observatory, Microsoft and Esri 10 m annual land use and land cover v02, via Microsoft Planetary Computer (CC BY 4.0). Overture Maps transportation and land use, &copy;&nbsp;OpenStreetMap contributors (ODbL), from Overture's PMTiles. Sentinel-2 mosaics by Earth Genome (CC BY 4.0). Place names from Overture Maps divisions, &copy;&nbsp;OpenStreetMap contributors, Overture Maps Foundation (ODbL), with geoBoundaries, Esri Community Maps contributors and LINZ (CC BY 4.0): the PMTiles and, via Source Cooperative, fused/overture. Search by Photon over OpenStreetMap (ODbL). Basemap by Carto.</small></p>
             <div style="margin-top:12px"><button class="at-chip">Close</button></div></div>`;
           pane.appendChild(about);
           about.querySelector("button").onclick = () => { about.style.display = "none"; };
@@ -2687,12 +2789,12 @@ def _(anywidget, asyncio, time, traitlets):
             if (ERR.test(t)) { note(t); bar.classList.remove("busy"); return; }
             const busy = t.split(" | ").filter((p) => p.includes("…"));
             const names = [];
-            for (const p of busy) {
-              if (/AlphaEarth/i.test(p) && !names.includes("AlphaEarth")) names.push("AlphaEarth");
-              if (/land cover/i.test(p) && !names.includes("land cover")) names.push("land cover");
-            }
+            // each dataset being read, by name, once (Stephen, 2026-09-27: "mention aef twice and not any of the other data")
+            for (const p of busy)
+              for (const [nm, re] of [["AlphaEarth", /AlphaEarth/], ["WorldCover", /WorldCover/], ["WSF", /\bWSF\b/], ["Impact Observatory", /Impact Observatory/], ["Overture", /Overture/]])
+                if (re.test(p) && !names.includes(nm)) names.push(nm);
             bar.classList.toggle("busy", names.length > 0);
-            note(names.length ? "Loading " + names.join(" and ") + "…" : "");
+            note(names.length ? "Loading " + (names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names[names.length - 1] : names[0]) + "…" : "");
           };
 
           // ---- tiles ----------------------------------------------------------------
@@ -2904,7 +3006,7 @@ def _(anywidget, asyncio, time, traitlets):
                 ? `<h4>Kinds of change, by year</h4><p class="sub">Hexagons in the kinds shown, by the year their change stood out most</p>`
                 : `<h4>Where it changed, by year</h4><p class="sub">Hexagons in view that changed a fair amount or more, by the year their change stood out most</p>`;
               h += yearBars(c);
-            } else h += `<p class="sub" style="margin-top:12px">${map && map.getZoom() < HEXZ ? `Zoom in to ${HEXZ} for the hexagons.` : "Reading AlphaEarth for this view…"}</p>`;
+            } else h += `<p class="sub" style="margin-top:12px">${map && map.getZoom() < HEXZ ? `Zoom in to ${HEXZ} for the hexagons.` : "Loading this view…"}</p>`;
             h += hexSection(cardData);
             yc.innerHTML = h;
             const x = yc.querySelector(".x");
@@ -3500,7 +3602,8 @@ def _(mo):
       Planetary Computer) teaches its own year on all ground. 2024 and 2025
       have no map, so the nearest year's map teaches only ground that
       barely moved (at or under the view's median `disp`).
-    - Overture roads and rail (major roads by width) make a cell a road;
+    - Overture roads and rail (major roads by width), read from Overture's
+      own PMTiles (the vector tiles under the view, a few MB), make a cell a road;
       its land use makes construction sites, quarries and landfill
       "construction", and residential and industrial land "built-up".
       Overture describes today, so it teaches the last year on all ground
@@ -3509,9 +3612,11 @@ def _(mo):
       until Impact Observatory has been read.
 
     A cell teaches only when 70% of it is one class, and a class needs 30
-    examples to be learned. The teachers are read only from zoom 11.8, and
-    they are slow, so the hexagons come first and the land cover follows;
-    Kinds of change, its key and the card's readings come when it does. The key gives each kind's most
+    examples to be learned. The teachers are read only from zoom 11.8.
+    When AlphaEarth has to be downloaded for a view, they are read at the
+    same time (they are small next to it), so Kinds of change is ready with
+    the hexagons; when AlphaEarth is already in memory, the hexagons come
+    at once and the land cover a few seconds after. The key gives each kind's most
     common pair of first- and last-year readings and its share. The model
     can only name the classes it saw in the view; the card lists them.
 
@@ -3846,8 +3951,8 @@ def _(
             _paint()
             HOLD["hex_status"] = HOLD["hex_ready"] = (
                 f"hexagons: {stats} | {what} in {t1 - t0:.1f} s, frame again {time.time() - t1:.1f} s | {fr['score']}"
-                + (" | reading the rest of the history…" if fr["hist_pending"] else "")
-                + (" | reading the land cover teachers…" if fr["teach_pending"] else ""))
+                + (f" | reading AlphaEarth {AEF_YEARS_ALL[0]} to {AEF_YEARS_ALL[-1]}, the whole history…" if fr["hist_pending"] else "")
+                + (" | reading Impact Observatory and Overture…" if fr["teach_pending"] else ""))
             _say(HOLD["hex_status"])
             if HOLD.get("card_pick"):
                 _card_send(HOLD["card_pick"])
@@ -3895,7 +4000,9 @@ def _(
         if ht is not None and ht[0] != key and ht[1] is not None:
             ht[1].cancel()
         years = list(range(y0, y1 + 1))
-        HOLD["hex_status"] = f"folding AlphaEarth {y0} to {y1} ({len(years)} years), WSF and the land cover…"
+        _tn = _teach_need((res, rbox), years) if res >= KINDS_MIN_RES else ([], False)
+        HOLD["hex_status"] = (f"reading AlphaEarth {y0} to {y1}, ESA WorldCover" + (", WSF" if USE_WSF else "")
+                              + (", Impact Observatory" if _tn[0] else "") + (", Overture" if _tn[1] else "") + "…")
         _say(HOLD["hex_status"])
         if key in HOLD["memo"]:
             fr, stats = HOLD["memo"][key]
@@ -3904,18 +4011,29 @@ def _(
             need = [y for y in years if (y, bkey) not in HOLD["aef"]]
             wneed = bkey not in HOLD["wc"]
             sneed = USE_WSF and bkey not in HOLD["wsf"]
-            # the land cover teachers (Impact Observatory, Overture) are read
-            # after the frame is up, see _later
+            # the land cover teachers (Impact Observatory, Overture PMTiles)
+            # are cheap next to AlphaEarth: when AlphaEarth has to be read,
+            # they are read with it, so Kinds of change is ready with the
+            # hexagons (Stephen, 2026-09-27: "we can load them sooner").
+            # When AlphaEarth is already kept, the hexagons come at once and
+            # the teachers after the frame (_later)
+            ineed, oneed = _teach_need(bkey, years) if need and res >= KINDS_MIN_RES else ([], False)
             got = await asyncio.gather(
                 wc_fold(box, res) if wneed else asyncio.sleep(0, result=HOLD["wc"].get(bkey)),
                 wsf_fold(box, fres) if sneed else asyncio.sleep(0, result=HOLD["wsf"].get(bkey, (None, "WSF off"))),
+                ov_fold(box, fres) if oneed else asyncio.sleep(0),
+                *(io_fold(box, fres, y) for y in ineed),
                 *(aef_fold(box, fres, y, read_res=rres) for y in need),
             )
             if wneed:
                 HOLD["wc"][bkey] = got[0]
             if sneed:
                 HOLD["wsf"][bkey] = got[1]
-            for y, r in zip(need, got[2:]):
+            if oneed:
+                HOLD["ov"][bkey] = got[2]
+            for y, r in zip(ineed, got[3:3 + len(ineed)]):
+                HOLD["io"][(y, bkey)] = r
+            for y, r in zip(need, got[3 + len(ineed):]):
                 HOLD["aef"][(y, bkey)] = r
             for k_ in ("aef", "wc", "wsf", "io", "ov"):
                 while len(HOLD[k_]) > 40:
@@ -3975,8 +4093,8 @@ def _(
         _paint()
         HOLD["hex_status"] = HOLD["hex_ready"] = (
             f"hexagons: {stats} | {fr['score']} | {time.time() - t0:.1f} s"
-            + (" | reading the rest of the history…" if fr["hist_pending"] else "")
-            + (" | reading the land cover teachers…" if fr["teach_pending"] else ""))
+            + (f" | reading AlphaEarth {AEF_YEARS_ALL[0]} to {AEF_YEARS_ALL[-1]}, the whole history…" if fr["hist_pending"] else "")
+            + (" | reading Impact Observatory and Overture…" if fr["teach_pending"] else ""))
         if HOLD.get("card_pick"):
             _card_send(HOLD["card_pick"])
         ht = HOLD.get("hist_task")
