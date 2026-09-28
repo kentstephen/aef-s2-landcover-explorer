@@ -178,7 +178,7 @@ def _(mo):
     **What you are looking at.** Every 10 m of ground has 64 AlphaEarth
     numbers a year, 2017 to 2025. The map folds them to hexagons and asks
     how each hexagon's numbers moved between the first and last year read
-    (2021 to 2025 to start). The quarter of the view that moved most is
+    (2023 to 2025 to start). The quarter of the view that moved most is
     grouped into six **kinds** by the direction it moved: hexagons of one
     color changed the same way, whatever size they are and wherever they
     sit. The rest of the ground is faint gray. Nothing tells the map what
@@ -222,7 +222,7 @@ def _(mo):
     | `-` `=` | the first year read, earlier, later |
     | `_` `+` | the last year read, earlier, later |
     | `L` | place names on the map, off and on |
-    | `/` | search a place, or paste an H3 string (`↑` `↓` pick, `Enter` flies there, outlined in blue) |
+    | `/` | search a place, or paste an H3 string (`↑` `↓` pick, `Enter` flies to the zoom that draws its size, outlined in gold; the next click clears it) |
     | `X` | fill the window, and back |
     | `Esc` | clear the searched outline, then close the about box, the menu, the card, then leave the full window |
 
@@ -239,13 +239,15 @@ def _(os, tempfile):
     # The imagery is Earth Genome's yearly mosaic, 2022 to 2025; AlphaEarth
     # runs 2017 to 2025. Not all nine years by default (Stephen, 2026-09-25:
     # "we don't need to aggregate default from 2017 to 2025 because that's a
-    # lot"): the window opens at 2021, the year before the imagery starts,
-    # so every imagery year has a step into it and can be a change year
-    # ("the scroll should include all years including 22"). Widen it with
-    # the window control.
+    # lot"). The window opened at 2021, the year before the imagery starts,
+    # so every imagery year could be a change year ("the scroll should
+    # include all years including 22"); it now opens at 2023 for a lighter
+    # demo (Stephen, 2026-09-27: "I just don't want the demo to be this
+    # beefy ... we can do 2023 to 25"): 3 years read, not 5, so change years
+    # 2024 and 2025. Widen it with the window control.
     S2_YEARS = (2022, 2023, 2024, 2025)
     AEF_YEARS_ALL = tuple(range(2017, 2026))
-    AEF_FROM0, AEF_TO0 = 2021, 2025
+    AEF_FROM0, AEF_TO0 = 2023, 2025
     # the first hold opens on the first imagery year, the scroll goes forward
     # from there (Stephen, 2026-09-25: "for the scroll it starts at 2022"),
     # and every later hold opens where the last one left off ("it should
@@ -684,6 +686,7 @@ def _(
             self._in, self._cap, self._kept, self.held = inner, cap, {}, 0
             self.reused = self.fetched = 0
             self._sem = asyncio.Semaphore(48)
+            self._fly = {}  # range -> its download in flight, shared
 
         def _take(self, k):
             b = self._kept.pop(k, None)
@@ -722,15 +725,30 @@ def _(
                         raise
                     await asyncio.sleep(0.5 * (k + 1))
 
+        async def _fetch(self, k):
+            try:
+                b = await self._one(*k)
+                self._put(k, b)
+                return b
+            finally:
+                self._fly.pop(k, None)
+
         async def get_ranges_async(self, path, *, starts, ends=None, lengths=None):
             ends = [a + n for a, n in zip(starts, lengths)] if ends is None else list(ends)
             out = [self._take((path, a, e)) for a, e in zip(starts, ends)]
             miss = [i for i, b in enumerate(out) if b is None]
             if miss:
-                got = await asyncio.gather(*(self._one(path, starts[i], ends[i]) for i in miss))
-                for i, b in zip(miss, got):
+                # a range already downloading (the read ahead, or another
+                # year's fold) is waited on, not asked for again; shielded, so
+                # a cancelled read still leaves its bytes kept
+                futs = []
+                for i in miss:
+                    k = (path, starts[i], ends[i])
+                    if k not in self._fly:
+                        self._fly[k] = asyncio.ensure_future(self._fetch(k))
+                    futs.append(asyncio.shield(self._fly[k]))
+                for i, b in zip(miss, await asyncio.gather(*futs)):
                     out[i] = b
-                    self._put((path, starts[i], ends[i]), b)
             return out
 
     # 6 GB: one view in a 2x box downloads 1.2 to 1.8 GB, so 2 GB held about
@@ -3098,13 +3116,15 @@ def _(anywidget, asyncio, time, traitlets):
           // a pick: the same cell again clears it (Stephen, 2026-09-25: the
           // selected hexagon stays "unless it's clicked again")
           function pickCell(cell, ll, pt, onImagery) {
-            // a searched cell goes with the next click; a click inside it only
-            // dismisses it and zooms back out (Stephen, 2026-09-27: "it just kind
-            // of stays there", "click on it to disappear ... return to ... zoom")
+            // a searched cell goes with the next click, inside it or anywhere
+            // else, and the map stays where it is (Stephen, 2026-09-27: "if I
+            // just click somewhere else on the map or click that hexagon, then
+            // it disappears", "It shouldn't fly me anywhere"); a click inside
+            // it only clears it
             if (searched) {
               let inside = false; try { inside = latLngToCell(ll.lat, ll.lng, getResolution(searched)) === searched; } catch (e) {}
-              if (inside) { unsearch(); return; }
-              searched = null; searchedZoom = null; update();
+              searched = null; update();
+              if (inside) return;
             }
             if (cell && cell === picked) { closeCard(); return; }
             imgPick = onImagery ? cell : null;
@@ -3281,7 +3301,8 @@ def _(anywidget, asyncio, time, traitlets):
             if (hmeta.seq) out.push(hexLayer(!st.holding && !!hcol && z >= HEXZ));
             const hv = hover != null && hover >= 0 ? outline("hover", hexes[hover], [255, 255, 255, 235], 2) : null;
             if (hv) out.push(hv);
-            const sc = searched ? outline("searched", searched, [20, 20, 20, 255], 3) : null;
+            // gold on the dark basemap (was near-black on the light one)
+            const sc = searched ? outline("searched", searched, [255, 200, 40, 255], 3) : null;
             if (sc) out.push(sc);
             const pk = picked ? outline("picked", picked, [255, 200, 40, 255], 3) : null;
             if (pk) out.push(pk);
@@ -3373,12 +3394,10 @@ def _(anywidget, asyncio, time, traitlets):
 
           // ---- search ------------------------------------------------------------------------
           const PHOTON = "https://photon.komoot.io/api/";
-          let gcHits = [], gcSel = -1, gcTimer = null, gcSeq = 0, searched = null, searchedZoom = null;
-          // drop the searched cell's outline and go back to the zoom it was searched from
+          let gcHits = [], gcSel = -1, gcTimer = null, gcSeq = 0, searched = null;
+          // drop the searched cell's outline, staying where the map is
           function unsearch() {
-            const cell = searched, z0 = searchedZoom;
-            searched = null; searchedZoom = null; update();
-            if (map && cell && z0 != null) { const [lat, lon] = cellToLatLng(cell); map.flyTo({center: [lon, lat], zoom: z0, duration: 1200, essential: true}); }
+            searched = null; update();
           }
           // an H3 string in the box is a cell, not a place (Stephen, 2026-09-25)
           const h3Of = (q) => { const h = q.trim().toLowerCase(); try { return /^[0-9a-f]{15}$/.test(h) && isValidCell(h) ? h : null; } catch (e) { return null; } };
@@ -3393,7 +3412,7 @@ def _(anywidget, asyncio, time, traitlets):
           };
           const gcAsk = async () => {
             const q = gc.value.trim();
-            if (!q && searched) { searched = null; searchedZoom = null; update(); }
+            if (!q && searched) { searched = null; update(); }
             if (q.length < 2) { gcHits = []; gcHide(); return; }
             const s = ++gcSeq;
             const h3 = h3Of(q);
@@ -3405,15 +3424,18 @@ def _(anywidget, asyncio, time, traitlets):
           };
           const gcFly = (f) => {
             if (f.h3) {
-              // zoomed so the cell is about 80 px across, never out past the hexagons
-              const [lat, lon] = cellToLatLng(f.h3), edge = 1281256 / Math.pow(Math.sqrt(7), getResolution(f.h3));
-              const zoom = Math.max(HEXZ, Math.min(17, Math.log2(78271.5 * Math.cos(lat * Math.PI / 180) * 80 / (2 * edge))));
-              if (!searched && map) searchedZoom = map.getZoom();  // a search from a search keeps the first zoom
+              // to the zoom that draws hexagons of the cell's own res, the middle
+              // of its zooms (Stephen, 2026-09-27: "the zoom where the hexagon
+              // would be appropriately seen"); finer than the finest drawn,
+              // about 80 px across; never out past the hexagons
+              const [lat, lon] = cellToLatLng(f.h3), r = getResolution(f.h3), L = cfg.res_ladder;
+              const zoom = Math.max(HEXZ, Math.min(17, L && r <= L[3] ? L[0] + (r - L[2] + 0.5) * L[1]
+                : Math.log2(78271.5 * Math.cos(lat * Math.PI / 180) * 80 / (2 * 1281256 / Math.pow(Math.sqrt(7), r))))));
               searched = f.h3; gcHits = []; gcHide(); gc.blur(); update();
               if (map) map.flyTo({center: [lon, lat], zoom, duration: 2200, essential: true});
               return;
             }
-            searched = null; searchedZoom = null;
+            searched = null;
             const [lon, lat] = f.geometry.coordinates;
             const ext = (f.properties || {}).extent;
             let zoom = 12;
@@ -3516,7 +3538,10 @@ def _(anywidget, asyncio, time, traitlets):
             });
             map.on("moveend", sendView);
             map.on("zoomend", () => { update(); renderYear(); styleKey(); });
-            map.on("zoom", styleSoon);
+            // a zoom in crossing 8.3 (the kernel's _AHEAD_ZOOM) tells the kernel
+            // at once, so it starts reading before the hexagons' zoom
+            let aheadSent = false;
+            map.on("zoom", () => { styleSoon(); const z = map.getZoom(); if (z < 8.3) aheadSent = false; else if (!aheadSent && z < HEXZ) { aheadSent = true; sendView(); } });
             map.on("mousemove", (e) => {
               if (holdT) return;
               // over the imagery: the white outline follows the pointer, no tooltip
@@ -3591,7 +3616,7 @@ def _(mo):
     **AlphaEarth, folded to H3.** Every 10 m pixel of the AlphaEarth
     Foundations embedding is 64 numbers describing the ground for one year.
     For the view on screen, the notebook reads each year in the window
-    (2021 to 2025 by default, 2017 to 2025 available) from Source
+    (2023 to 2025 by default, 2017 to 2025 available) from Source
     Cooperative: the COG overviews at coarser hexagons, the zarr mosaic
     from res 11 in. Each pixel's lon/lat goes through an h3ronpy UDF inside
     DataFusion (via xarray-sql), and the pixels are averaged per cell, one
@@ -3719,6 +3744,10 @@ def _(
     HOME,
     KINDS_MIN_ZOOM,
     LABELS_SLOT,
+    BASE_RES,
+    MAX_RES,
+    PER_RES,
+    ZOOM0,
     OV_DIV_PM,
     RASTER_TILE,
     S2_SCALE0,
@@ -3745,6 +3774,7 @@ def _(
         "aef_from": AEF_FROM0, "aef_to": AEF_TO0, "aef_years": list(AEF_YEARS_ALL),
         "hex_zoom": HEX_ZOOM, "kinds_zoom": KINDS_MIN_ZOOM, "div_pm": OV_DIV_PM, "fit": _fit, "hold_ms": HOLD_MS, "hold_slop": HOLD_SLOP_PX,
         "viridis": VIRIDIS, "alpha_fill": ALPHA_FILL, "alpha_quiet": ALPHA_QUIET, "use_wsf": USE_WSF,
+        "res_ladder": [ZOOM0, PER_RES, BASE_RES, MAX_RES],
     }))
     HOLD = {
         "frame": None, "sent": None, "box": None, "res": None, "vs": None,
@@ -4132,6 +4162,13 @@ def _(
             for y, r in zip(need, got[2:]):
                 HOLD["aef"][(y, bkey)] = r
             _trim(bkey)
+            # zoomed or moved on while these were read (a fast zoom in): they
+            # are kept, but no frame is built or drawn for a view already left
+            pend = HOLD.get("pending")
+            if pend is not None and not force:
+                pv = _vsd(pend)
+                if pv["zoom"] < HEX_ZOOM or min(15, res_for_view(pv, pad_box(view_to_bbox(pv))) + HEX_UP) != res or not contains(box, view_to_bbox(pv)):
+                    return
             wc, s_wc = HOLD["wc"][bkey]
             wsf, s_wsf = HOLD["wsf"].get(bkey, (None, "WSF off"))
             aef_by_year = {y: HOLD["aef"][(y, bkey)][0] for y in years if (y, bkey) in HOLD["aef"]}
@@ -4195,12 +4232,51 @@ def _(
         if (fr["hist_pending"] or fr["teach_pending"]) and not (ht is not None and ht[0] == key and ht[1] is not None and not ht[1].done()):
             _later(fr, key, box, res, rres, fres, stats, hist)
 
+    # READ AHEAD (Stephen, 2026-09-27: "start the download right away at a
+    # certain zoom ... maybe 8.3"): from _AHEAD_ZOOM, still short of the
+    # hexagons, AlphaEarth and WorldCover for the box zoom HEX_ZOOM would read
+    # here are read in the background. Crossing into the hexagons over the
+    # same ground then only builds the frame; nearby, the COG bytes are kept
+    # (_Kept) and the fold is quick. A new place cancels the fold, not the
+    # downloads under it.
+    _AHEAD_ZOOM = 8.3
+
+    def _ahead(vsd):
+        v9 = dict(vsd, zoom=HEX_ZOOM)
+        box = pad_box(view_to_bbox(v9))
+        rres = res_for_view(v9, box)
+        res = min(15, rres + HEX_UP)
+        fres = min(15, res + CARRY_RES)
+        y0, y1 = HOLD["y0"], HOLD["y1"]
+        bkey = (res, tuple(round(v, 3) for v in box))
+        key = (y0, y1, bkey)
+        at = HOLD.get("ahead")
+        if at is not None and at[0] == key:
+            return
+        if at is not None and not at[1].done():
+            at[1].cancel()
+        need = [y for y in range(y0, y1 + 1) if (y, bkey) not in HOLD["aef"]]
+        wneed = bkey not in HOLD["wc"]
+
+        async def _run():
+            got = await asyncio.gather(wc_fold(box, res) if wneed else asyncio.sleep(0),
+                                       *(aef_fold(box, fres, y, read_res=rres) for y in need))
+            if wneed:
+                HOLD["wc"][bkey] = got[0]
+            for y, r in zip(need, got[1:]):
+                HOLD["aef"][(y, bkey)] = r
+            _trim(bkey)
+
+        HOLD["ahead"] = (key, _spawn(_run()))
+
     async def _serve(vs, force=False):
         vsd = _vsd(vs)
         if vsd["zoom"] < HEX_ZOOM:
             # the frame stays (hidden in the browser, its tiles cached there),
             # so zooming back in over the same ground is instant
             HOLD["hex_status"] = f"hexagons from zoom {HEX_ZOOM:g}"
+            if vsd["zoom"] >= _AHEAD_ZOOM:
+                _ahead(vsd)
         else:
             await _serve_hex(vsd, force)
         _say(HOLD["hex_status"])
