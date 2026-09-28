@@ -3430,7 +3430,7 @@ def _(anywidget, asyncio, time, traitlets):
               // about 80 px across; never out past the hexagons
               const [lat, lon] = cellToLatLng(f.h3), r = getResolution(f.h3), L = cfg.res_ladder;
               const zoom = Math.max(HEXZ, Math.min(17, L && r <= L[3] ? L[0] + (r - L[2] + 0.5) * L[1]
-                : Math.log2(78271.5 * Math.cos(lat * Math.PI / 180) * 80 / (2 * 1281256 / Math.pow(Math.sqrt(7), r))))));
+                : Math.log2(78271.5 * Math.cos(lat * Math.PI / 180) * 80 / (2 * 1281256 / Math.pow(Math.sqrt(7), r)))));
               searched = f.h3; gcHits = []; gcHide(); gc.blur(); update();
               if (map) map.flyTo({center: [lon, lat], zoom, duration: 2200, essential: true});
               return;
