@@ -431,7 +431,10 @@ def _(os, tempfile):
     ADMIN_PQ = "s3://us-west-2.opendata.source.coop/fused/overture/2026-05-20-0/theme=divisions"
 
     VIEW_W, VIEW_H = 700, 780
-    PAD = 1.3
+    # the box read around the view, x its width and height: 2 leaves half a
+    # screen each side, so a pan of up to half a screen needs no new read
+    # (Stephen, 2026-09-27: "we could load a bigger bounding box")
+    PAD = 2.0
     SETTLE = 0.35
     # hexagons from zoom 9, the plain basemap below (Stephen, 2026-09-25: the
     # hexagons as tiles "making my computer hum", so a min zoom for zoomed
@@ -730,8 +733,9 @@ def _(
                     self._put((path, starts[i], ends[i]), b)
             return out
 
-    # 2 GB: about 80 tiles
-    _store = _Kept(S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, client_options=S3_OPTS), 2 * 1024 ** 3)
+    # 6 GB: one view in a 2x box downloads 1.2 to 1.8 GB, so 2 GB held about
+    # one view and a pan pushed out what was just read (molab: 32 GB)
+    _store = _Kept(S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, client_options=S3_OPTS), 6 * 1024 ** 3)
     _mstore = S3Store("us-west-2.opendata.source.coop", region="us-west-2", skip_signature=True, prefix=AEF_PREFIX, client_options=S3_OPTS)
     _ds = xr.open_zarr(ObjectStore(_mstore, read_only=True), chunks=None, consolidated=False)
     _ti = {y: int(np.where(_ds.time.values == y)[0][0]) for y in AEF_YEARS_ALL}
@@ -835,6 +839,22 @@ def _(
     _DEQ = ", ".join(f"avg(signum(e{i:02d}) * power(e{i:02d} / 127.5, 2)) AS e{i:02d}" for i in range(64))
     _seq = itertools.count()  # a table name per fold: the years fold side by side on the CPU pool
 
+    def _compact(t):
+        """A year's fold as {"cell": sorted uint64, "V": float32 (n, 64), each
+        row unit length, NaN where it has none}: made once per read, so every
+        frame built from it lines the years up by cell with no join and no
+        restack of 64 columns (1 s of a 3.4 s frame at a 2x box), at half the
+        memory of the float64 table."""
+        cell = t["cell"].to_numpy().astype(np.uint64)
+        o = np.argsort(cell)
+        V = np.empty((len(cell), 64), np.float32)
+        for i in range(64):
+            V[:, i] = t[f"e{i:02d}"].to_numpy(zero_copy_only=False)[o]
+        nrm = np.linalg.norm(V, axis=1)
+        V /= np.maximum(nrm, 1e-9)[:, None]
+        V[~np.isfinite(nrm) | (nrm == 0)] = np.nan
+        return {"cell": cell[o], "V": V}
+
     def _fold_rows_sync(res, box, cols, lat, lon):
         W_, S_, E_, N_ = box
         name = f"aef_{next(_seq)}"
@@ -883,10 +903,10 @@ def _(
 
             def _mosaic():
                 LON, LAT = np.meshgrid(lon, lat)
-                return _fold_rows_sync(res, box, emb.reshape(64, -1), LAT.ravel(), LON.ravel())
+                return _compact(_fold_rows_sync(res, box, emb.reshape(64, -1), LAT.ravel(), LON.ravel()))
 
             out = await cpu(_mosaic)
-            return out, f"AEF {year} mosaic {t1 - t0:.1f} s · fold {out.num_rows:,} {time.time() - t1:.1f} s"
+            return out, f"AEF {year} mosaic {t1 - t0:.1f} s · fold {len(out['cell']):,} {time.time() - t1:.1f} s"
         li = AEF_LEVEL_FOR_RES[rr]
         ix = _IDX[year]
         hit = np.where(
@@ -909,12 +929,12 @@ def _(
             cols = np.concatenate([p[0].reshape(64, -1) for p in parts], axis=1)
             lon = np.concatenate([p[1].ravel() for p in parts])
             lat = np.concatenate([p[2].ravel() for p in parts])
-            return _fold_rows_sync(res, box, cols, lat, lon), cols.shape[1]
+            return _compact(_fold_rows_sync(res, box, cols, lat, lon)), cols.shape[1]
 
         out, npx = await cpu(_cogs)
         return out, (
             f"AEF {year} ov{li} ({10 * 2 ** (li + 1)} m) {len(parts)} files {npx / 1e6:.2f} Mpx "
-            f"{t1 - t0:.1f} s · fold {out.num_rows:,} {time.time() - t1:.1f} s"
+            f"{t1 - t0:.1f} s · fold {len(out['cell']):,} {time.time() - t1:.1f} s"
             f" · kept {_store.held / 1e6:,.0f} MB (fetched {_store.fetched / 1e6:,.0f}, reused {_store.reused / 1e6:,.0f})"
             + (f" · {len(bad)} files failed ({type(bad[0]).__name__})" if bad else "")
         )
@@ -1813,9 +1833,13 @@ def _(
     # finer cell that moved most, whole (its change, its year, its steps).
     # A hexagon reads "the most-changed patch in here", not "the average of
     # in here", so one changed site is not diluted by the quiet ground around it.
-    _E = [f"e{i:02d}" for i in range(64)]
     _WC_NAME = dict(WC_CLASSES)
     from h3ronpy import cells_area_m2 as _cells_area_m2
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    # the land cover reader's years train side by side (numpy lets go of the
+    # GIL in the matrix products): its own pool, as the frame itself runs on
+    # the cpu pool
+    _lc_pool = _TPE(4, thread_name_prefix="lc")
 
     # WorldCover's classes in LC_VOCAB (the stand-in teacher)
     _WC_LC = {10: "trees", 20: "grass", 30: "grass", 40: "cropland", 50: "built-up", 60: "bare",
@@ -2040,20 +2064,20 @@ def _(
             return None
         # every year read when the whole history is asked for, the window's otherwise
         hyears = sorted(y for y, t in aef_by_year.items() if t is not None) if hist else years
-        for y in hyears:
-            con.register(f"aef_{y}", aef_by_year[y])
-        sel = ["cell"]
-        for y in hyears:
-            sel += [f"a{y}.{e} AS {e}_{y}" for e in _E]
-        joins = [f"LEFT JOIN aef_{y} a{y} USING (cell)" for y in hyears if y != years[0]]
-        j = con.execute(f"SELECT {', '.join(sel)} FROM aef_{years[0]} a{years[0]} {' '.join(joins)} ORDER BY cell").arrow().read_all()
-        nfine = j.num_rows
+        # every year on the first year's cells (sorted, see _compact), NaN
+        # where a year has none; not changed in place below
+        base = aef_by_year[years[0]]["cell"]
+        nfine = len(base)
 
         def _V(y):
-            V = np.stack([j[f"{e}_{y}"].to_numpy(zero_copy_only=False) for e in _E], axis=1).astype(np.float32)
-            nrm = np.linalg.norm(V, axis=1)
-            V = V / np.maximum(nrm, 1e-9)[:, None]
-            V[~np.isfinite(nrm) | (nrm == 0)] = np.nan
+            t = aef_by_year[y]
+            if t["cell"] is base:
+                return t["V"]
+            V = np.full((nfine, 64), np.nan, np.float32)
+            if len(t["cell"]):
+                pos = np.clip(np.searchsorted(t["cell"], base), 0, len(t["cell"]) - 1)
+                m_ = t["cell"][pos] == base
+                V[m_] = t["V"][pos[m_]]
             return V
 
         Vs = {y: _V(y) for y in hyears}
@@ -2091,7 +2115,7 @@ def _(
             hrel = hsteps / hmed[:, None]
 
         # WSF on the same finer cells, then the model
-        fine = j["cell"].to_numpy().astype(np.uint64)
+        fine = base
         wsf_c = np.zeros((nfine, WSF_NIDX))
         wsf_n = np.zeros(nfine)
         if wsf is not None and wsf.num_rows:
@@ -2210,7 +2234,7 @@ def _(
         if ov_t is not None:
             src.append("Overture")
         last = AEF_YEARS_ALL[-1]
-        readers, lc_n = {}, {}
+        labs = {}
         for y in lyears:
             if io_lab:
                 if y in io_lab:
@@ -2222,10 +2246,10 @@ def _(
                 lab = np.where(quiet_f, wc_lab, -1) if y != 2021 else wc_lab.copy()
             # Overture is today's: the last year on all ground, earlier only quiet
             ov_y = ov_lab if y == last else np.where(quiet_f, ov_lab, -1)
-            lab = np.where(ov_y >= 0, ov_y, lab)
-            readers[y], cnt = _lc_fit(Vs[y], lab, seed=y)
-            if y == years[-1]:
-                lc_n = cnt
+            labs[y] = np.where(ov_y >= 0, ov_y, lab)
+        fits = dict(zip(lyears, _lc_pool.map(lambda y: _lc_fit(Vs[y], labs[y], seed=y), lyears)))
+        readers = {y: f[0] for y, f in fits.items()}
+        lc_n = fits[years[-1]][1] if years[-1] in fits else {}
         _none = lambda V: np.full(len(V), -1, np.int64)
         lcy = np.stack([(readers[y] or _none)(Vs[y][pk]) for y in lyears], 1) if n else np.zeros((0, len(lyears)), np.int64)
         lc_f0, lc_f1 = (readers[years[0]] or _none)(Vf_), (readers[years[-1]] or _none)(Vl_)
@@ -3915,6 +3939,26 @@ def _(
             })
         HOLD["sent"] = fr
 
+    _AEF_KEEP_BYTES = 3 * 1024 ** 3
+
+    def _trim(bkey=None):
+        # the kept folds: AlphaEarth's by bytes (a year in a 2x box at zoom
+        # 12 is ~140 MB, float32), least recently used first and never the
+        # box in use; the rest by count
+        if bkey is not None:
+            for k in [k for k in HOLD["aef"] if k[1] == bkey]:
+                HOLD["aef"][k] = HOLD["aef"].pop(k)
+        size = lambda v: v[0]["V"].nbytes if v[0] is not None else 0
+        held = sum(size(v) for v in HOLD["aef"].values())
+        for k in list(HOLD["aef"]):
+            if held <= _AEF_KEEP_BYTES:
+                break
+            if k[1] != bkey:
+                held -= size(HOLD["aef"].pop(k))
+        for k_ in ("wc", "wsf", "io", "ov"):
+            while len(HOLD[k_]) > 40:
+                HOLD[k_].pop(next(iter(HOLD[k_])))
+
     def _teach(bkey):
         # the land cover teachers read for this box (see LC_* in the constants)
         return {"io": {y: HOLD["io"][(y, bkey)][0] for y in IO_YEARS if (y, bkey) in HOLD["io"] and HOLD["io"][(y, bkey)][0] is not None},
@@ -3977,6 +4021,7 @@ def _(
             got = await asyncio.gather(*(aef_fold(box, fres, y, read_res=rres) for y in need))
             for y, r in zip(need, got):
                 HOLD["aef"][(y, bkey)] = r
+            _trim(bkey)
             return f"history {AEF_YEARS_ALL[0]} to {AEF_YEARS_ALL[-1]} read"
 
         async def _rebuild(what, t0):
@@ -4086,9 +4131,7 @@ def _(
                 HOLD["wsf"][bkey] = got[1]
             for y, r in zip(need, got[2:]):
                 HOLD["aef"][(y, bkey)] = r
-            for k_ in ("aef", "wc", "wsf", "io", "ov"):
-                while len(HOLD[k_]) > 40:
-                    HOLD[k_].pop(next(iter(HOLD[k_])))
+            _trim(bkey)
             wc, s_wc = HOLD["wc"][bkey]
             wsf, s_wsf = HOLD["wsf"].get(bkey, (None, "WSF off"))
             aef_by_year = {y: HOLD["aef"][(y, bkey)][0] for y in years if (y, bkey) in HOLD["aef"]}
